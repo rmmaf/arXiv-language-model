@@ -67,37 +67,32 @@ class ElasticClient:
         query_vector: list[float],
         top_k: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Run a hybrid BM25 + dense vector search and return top_k results."""
-        k = top_k or settings.top_k_results
+        """Run a hybrid BM25 + kNN search and return top_k results.
 
-        query_body: dict[str, Any] = {
-            "size": k,
-            "query": {
-                "bool": {
-                    "should": [
-                        {
-                            "multi_match": {
-                                "query": query_text,
-                                "fields": ["title^2", "abstract"],
-                                "type": "best_fields",
-                            }
-                        },
-                        {
-                            "script_score": {
-                                "query": {"match_all": {}},
-                                "script": {
-                                    "source": "cosineSimilarity(params.query_vector, 'embedding') + 1.0",
-                                    "params": {"query_vector": query_vector},
-                                },
-                            }
-                        },
-                    ]
+        Uses Elasticsearch 8.x native kNN for the vector part (HNSW index)
+        instead of brute-force script_score, which is critical for large indices.
+        """
+        k = top_k or settings.top_k_results
+        knn_candidates = max(k * 10, 100)
+
+        response = await self.client.search(
+            index=settings.index_name,
+            size=k,
+            query={
+                "multi_match": {
+                    "query": query_text,
+                    "fields": ["title^2", "abstract"],
+                    "type": "best_fields",
                 }
             },
-            "_source": ["paper_id", "title", "abstract", "categories", "authors"],
-        }
-
-        response = await self.client.search(index=settings.index_name, body=query_body)
+            knn={
+                "field": "embedding",
+                "query_vector": query_vector,
+                "k": k,
+                "num_candidates": knn_candidates,
+            },
+            source=["paper_id", "title", "abstract", "categories", "authors"],
+        )
 
         results: list[dict[str, Any]] = []
         for hit in response["hits"]["hits"]:

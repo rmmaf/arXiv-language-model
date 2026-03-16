@@ -60,7 +60,7 @@ class LLMManager:
 
         model_path = str(settings.model_dir)
         logger.info("Loading tokenizer from %s", model_path)
-        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
 
         quant_config = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -74,7 +74,7 @@ class LLMManager:
             model_path,
             quantization_config=quant_config,
             device_map="auto",
-            trust_remote_code=True,
+            trust_remote_code=False,
         )
 
         pipe = hf_pipeline(
