@@ -1,8 +1,10 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
 from src.api.schemas import AskRequest, AskResponse, HealthResponse
+from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1")
@@ -14,7 +16,13 @@ async def ask(request: Request, body: AskRequest) -> AskResponse:
     rag_service = request.app.state.rag_service
 
     try:
-        result = await rag_service.ask(question=body.question, top_k=body.top_k)
+        result = await asyncio.wait_for(
+            rag_service.ask(question=body.question, top_k=body.top_k),
+            timeout=settings.api_request_timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.error("Request timed out after %.0fs", settings.api_request_timeout)
+        raise HTTPException(status_code=504, detail="Request timed out")
     except Exception as exc:
         logger.exception("RAG pipeline error")
         raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -6,6 +6,7 @@ import httpx
 import streamlit as st
 
 API_URL = os.getenv("API_URL", "http://localhost:8000")
+API_TIMEOUT = float(os.getenv("API_REQUEST_TIMEOUT", "600"))
 ARXIV_ABS_BASE = "https://arxiv.org/abs"
 
 st.set_page_config(page_title="arXiv RAG", page_icon="📄", layout="centered")
@@ -23,7 +24,7 @@ if ask_clicked and question:
             response = httpx.post(
                 f"{API_URL}/api/v1/ask",
                 json={"question": question, "top_k": top_k},
-                timeout=120.0,
+                timeout=API_TIMEOUT,
             )
             response.raise_for_status()
             data = response.json()

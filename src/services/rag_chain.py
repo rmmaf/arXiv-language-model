@@ -1,5 +1,6 @@
 """RAG orchestration: query -> embed -> hybrid search -> PDF extraction -> re-rank -> LLM answer."""
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -111,7 +112,25 @@ class RAGService:
         prompt_text = RAG_PROMPT.format(context=context, question=question)
         logger.debug("Prompt length: %d characters", len(prompt_text))
 
-        answer = await self._llm.pipeline.ainvoke(prompt_text)
+        try:
+            answer = await asyncio.wait_for(
+                self._llm.pipeline.ainvoke(prompt_text),
+                timeout=settings.llm_timeout,
+            )
+        except asyncio.TimeoutError:
+            elapsed = time.perf_counter() - start
+            logger.error("LLM inference timed out after %.1fs", elapsed)
+            return {
+                "answer": (
+                    "The model took too long to generate a response. "
+                    "Try a more specific question or reduce top_k."
+                ),
+                "sources": [
+                    {"paper_id": r["paper_id"], "title": r["title"], "score": r["score"]}
+                    for r in search_results
+                ],
+                "processing_time_seconds": round(elapsed, 3),
+            }
 
         sources = [
             {
