@@ -6,9 +6,10 @@ Elasticsearch in batches.  Encoding and indexing are pipelined so the GPU
 stays busy while the previous batch is sent to Elasticsearch.
 
 Usage:
-    python -m src.services.indexer
+    python -m src.services.indexer --tenant-id <uuid>
 """
 
+import argparse
 import asyncio
 import json
 import logging
@@ -65,6 +66,7 @@ def _encode_batch(
 
 def _collect_batch(
     doc_iter: Generator[dict[str, Any], None, None],
+    tenant_id: str,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Accumulate up to *indexer_batch_size* records from the iterator."""
     batch: list[dict[str, Any]] = []
@@ -80,6 +82,7 @@ def _collect_batch(
         batch.append(
             {
                 "paper_id": paper_id,
+                "tenant_id": tenant_id,
                 "title": doc.get("title", "").strip(),
                 "abstract": doc.get("abstract", "").strip(),
                 "categories": doc.get("categories", ""),
@@ -92,12 +95,14 @@ def _collect_batch(
     return batch, texts
 
 
-async def run_indexing() -> None:
+async def run_indexing(tenant_id: str) -> None:
     if settings.embedding_device == "cpu":
         logger.warning(
-            "⚠ Embedding running on CPU — indexing will be extremely slow. "
+            "Embedding running on CPU — indexing will be extremely slow. "
             "Set EMBEDDING_DEVICE=cuda or use a machine with GPU for 10-50x speedup."
         )
+
+    logger.info("Indexing for tenant: %s", tenant_id)
 
     encoder = SentenceTransformer(
         settings.embedding_model_name, device=settings.embedding_device
@@ -121,8 +126,7 @@ async def run_indexing() -> None:
     start_time = time.perf_counter()
     doc_iter = iter_metadata(settings.data_file)
 
-    # -- Kickstart: collect + encode the first batch synchronously -----------
-    batch, texts = _collect_batch(doc_iter)
+    batch, texts = _collect_batch(doc_iter, tenant_id)
     if not batch:
         logger.info("No documents to index.")
         await elastic.close()
@@ -133,21 +137,17 @@ async def run_indexing() -> None:
     )
 
     while batch:
-        # Attach embeddings to current batch records
         for rec, emb in zip(batch, embeddings):
             rec["embedding"] = emb.tolist()
 
-        # Collect NEXT batch of raw docs (CPU-only, fast)
-        next_batch, next_texts = _collect_batch(doc_iter)
+        next_batch, next_texts = _collect_batch(doc_iter, tenant_id)
 
-        # Launch encoding of next batch on GPU (in background thread) …
         encode_future: asyncio.Future | None = None
         if next_batch:
             encode_future = loop.run_in_executor(
                 pool, _encode_batch, encoder, next_texts
             )
 
-        # … while simultaneously bulk-indexing the current batch via network.
         try:
             indexed = await elastic.bulk_index(batch)
             total_indexed += indexed
@@ -161,7 +161,6 @@ async def run_indexing() -> None:
             total_indexed / elapsed if elapsed > 0 else 0,
         )
 
-        # Wait for next encoding to finish (it likely already has)
         if encode_future is not None:
             embeddings = await encode_future
         batch, texts = next_batch, next_texts
@@ -180,4 +179,11 @@ async def run_indexing() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run_indexing())
+    parser = argparse.ArgumentParser(description="Index arXiv metadata for a tenant")
+    parser.add_argument(
+        "--tenant-id",
+        required=True,
+        help="UUID of the tenant to associate indexed documents with",
+    )
+    args = parser.parse_args()
+    asyncio.run(run_indexing(args.tenant_id))

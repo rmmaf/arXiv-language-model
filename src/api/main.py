@@ -7,10 +7,13 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.api.admin_routes import admin_router
 from src.api.routes import router
 from src.core.config import settings
 from src.core.elastic import ElasticClient
 from src.core.llm import LLMManager
+from src.core.rate_limiter import RateLimiter
+from src.core.tenants import TenantManager
 from src.services.rag_chain import RAGService
 
 logging.basicConfig(
@@ -22,8 +25,15 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Startup: connect to ES, load LLM, build RAG service.  Shutdown: release."""
+    """Startup: connect to ES, load LLM, init tenants, build RAG service.  Shutdown: release."""
     logger.info("Starting up ...")
+
+    tenant_manager = TenantManager()
+    await tenant_manager.init_db()
+    app.state.tenant_manager = tenant_manager
+    logger.info("Tenant database initialised")
+
+    app.state.rate_limiter = RateLimiter()
 
     elastic = ElasticClient()
     await elastic.connect()
@@ -46,7 +56,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="ArXiv Hybrid RAG API",
     version="1.0.0",
-    description="Hybrid semantic + lexical search over arXiv papers with local LLM.",
+    description="Multi-tenant hybrid semantic + lexical search over arXiv papers with local LLM.",
     lifespan=lifespan,
 )
 
@@ -59,3 +69,4 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(admin_router)

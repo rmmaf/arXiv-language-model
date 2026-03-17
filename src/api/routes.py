@@ -1,23 +1,39 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from src.api.schemas import AskRequest, AskResponse, HealthResponse
+from src.core.auth import get_current_tenant
 from src.core.config import settings
+from src.core.rate_limiter import check_rate_limit
+from src.core.tenants import Tenant
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1")
 
 
 @router.post("/ask", response_model=AskResponse)
-async def ask(request: Request, body: AskRequest) -> AskResponse:
+async def ask(
+    request: Request,
+    body: AskRequest,
+    tenant: Tenant = Depends(get_current_tenant),
+) -> AskResponse:
     """Answer a research question using the hybrid RAG pipeline."""
+    await check_rate_limit(request, tenant)
+
     rag_service = request.app.state.rag_service
+    tenant_manager = request.app.state.tenant_manager
+    active_count = await tenant_manager.count_active()
 
     try:
         result = await asyncio.wait_for(
-            rag_service.ask(question=body.question, top_k=body.top_k),
+            rag_service.ask(
+                question=body.question,
+                tenant_id=tenant.id,
+                top_k=body.top_k,
+                active_tenant_count=active_count,
+            ),
             timeout=settings.api_request_timeout,
         )
     except asyncio.TimeoutError:

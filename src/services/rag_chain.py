@@ -2,11 +2,13 @@
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any
 
 import numpy as np
 from langchain_core.prompts import PromptTemplate
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 
 from src.core.config import settings
@@ -38,7 +40,25 @@ class RAGService:
         self._encoder = SentenceTransformer(
             settings.embedding_model_name, device=settings.embedding_device
         )
-        self._pdf_reader = AsyncPDFReader()
+
+    @staticmethod
+    def _adaptive_chunk_size(active_tenants: int) -> int:
+        """Reduce chunk size as more tenants are active to lower LLM pressure."""
+        base = settings.base_chunk_size
+        minimum = settings.min_chunk_size
+        if active_tenants <= 1:
+            return base
+        factor = 1.0 / math.log2(active_tenants + 1)
+        return max(minimum, int(base * factor))
+
+    def _build_pdf_reader(self, active_tenants: int) -> AsyncPDFReader:
+        chunk_size = self._adaptive_chunk_size(active_tenants)
+        return AsyncPDFReader(
+            splitter=RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=settings.chunk_overlap,
+            )
+        )
 
     def _embed(self, texts: list[str]) -> np.ndarray:
         return self._encoder.encode(texts, show_progress_bar=False)
@@ -67,19 +87,22 @@ class RAGService:
     async def ask(
         self,
         question: str,
+        tenant_id: str,
         top_k: int | None = None,
+        active_tenant_count: int = 1,
     ) -> dict[str, Any]:
-        """Run the full RAG pipeline and return the answer with sources."""
+        """Run the full RAG pipeline scoped to *tenant_id*."""
         start = time.perf_counter()
         k = top_k or settings.top_k_results
 
-        logger.info("RAG query: %s", question[:120])
+        logger.info("RAG query [tenant=%s]: %s", tenant_id, question[:120])
 
         query_vector = self._embed([question])[0]
 
         search_results = await self._elastic.hybrid_search(
             query_text=question,
             query_vector=query_vector.tolist(),
+            tenant_id=tenant_id,
             top_k=k,
         )
 
@@ -93,7 +116,8 @@ class RAGService:
         paper_ids = [r["paper_id"] for r in search_results]
         logger.info("Downloading PDFs for papers: %s", paper_ids)
 
-        chunks_by_paper = await self._pdf_reader.process_papers(paper_ids)
+        pdf_reader = self._build_pdf_reader(active_tenant_count)
+        chunks_by_paper = await pdf_reader.process_papers(paper_ids)
 
         all_chunks: list[str] = []
         for pid in paper_ids:

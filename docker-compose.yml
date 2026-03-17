@@ -25,6 +25,7 @@ services:
     environment:
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - EMBEDDING_DEVICE=cuda
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-change-me-in-production}
     deploy:
       resources:
         reservations:

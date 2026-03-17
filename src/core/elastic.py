@@ -44,6 +44,7 @@ class ElasticClient:
             "mappings": {
                 "properties": {
                     "paper_id": {"type": "keyword"},
+                    "tenant_id": {"type": "keyword"},
                     "title": {"type": "text", "analyzer": "standard"},
                     "abstract": {"type": "text", "analyzer": "standard"},
                     "categories": {"type": "keyword"},
@@ -65,24 +66,31 @@ class ElasticClient:
         self,
         query_text: str,
         query_vector: list[float],
+        tenant_id: str,
         top_k: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Run a hybrid BM25 + kNN search and return top_k results.
+        """Run a hybrid BM25 + kNN search scoped to *tenant_id*.
 
         Uses Elasticsearch 8.x native kNN for the vector part (HNSW index)
         instead of brute-force script_score, which is critical for large indices.
         """
         k = top_k or settings.top_k_results
         knn_candidates = max(k * 10, 100)
+        tenant_filter = {"term": {"tenant_id": tenant_id}}
 
         response = await self.client.search(
             index=settings.index_name,
             size=k,
             query={
-                "multi_match": {
-                    "query": query_text,
-                    "fields": ["title^2", "abstract"],
-                    "type": "best_fields",
+                "bool": {
+                    "must": {
+                        "multi_match": {
+                            "query": query_text,
+                            "fields": ["title^2", "abstract"],
+                            "type": "best_fields",
+                        }
+                    },
+                    "filter": tenant_filter,
                 }
             },
             knn={
@@ -90,6 +98,7 @@ class ElasticClient:
                 "query_vector": query_vector,
                 "k": k,
                 "num_candidates": knn_candidates,
+                "filter": tenant_filter,
             },
             source=["paper_id", "title", "abstract", "categories", "authors"],
         )

@@ -30,3 +30,33 @@ class HealthResponse(BaseModel):
     status: str
     elasticsearch: bool
     llm_loaded: bool
+
+
+# --------------- Tenant admin schemas ---------------
+
+class TenantCreate(BaseModel):
+    """Payload for creating a new tenant."""
+
+    name: str = Field(..., min_length=1, max_length=200)
+    rate_limit: int | None = Field(default=None, ge=1, le=1000)
+
+
+class TenantResponse(BaseModel):
+    """Tenant data returned by admin endpoints."""
+
+    id: str
+    name: str
+    api_key: str
+    rate_limit: int
+    is_active: bool
+    created_at: str
+
+
+class TenantListItem(BaseModel):
+    """Tenant summary (API key masked) for list endpoints."""
+
+    id: str
+    name: str
+    rate_limit: int
+    is_active: bool
+    created_at: str
