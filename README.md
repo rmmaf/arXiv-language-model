@@ -205,7 +205,9 @@ Add `-v` to also remove the Elasticsearch data volume:
 docker compose down -v
 ```
 
-## Running Locally (Without Docker)
+## Running Without Full Docker Compose
+
+If you prefer to start only the API and the frontend via Docker (without orchestrating everything with `docker compose up`), you still need an Elasticsearch instance running.
 
 ### 1. Start Elasticsearch
 
@@ -220,29 +222,12 @@ docker run -d --name elasticsearch \
   elasticsearch:8.14.0
 ```
 
-### 2. Create a Virtual Environment and Install Dependencies
-
-```bash
-python -m venv .venv
-
-# Linux/macOS
-source .venv/bin/activate
-
-# Windows
-.venv\Scripts\activate
-
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-> **Note:** For GPU support, ensure you have a CUDA-compatible version of PyTorch installed. See https://pytorch.org/get-started/locally/ for install instructions specific to your CUDA version.
-
-### 3. Configure Environment Variables
+### 2. Configure Environment Variables
 
 Create a `.env` file in the project root (or export the variables directly):
 
 ```env
-ELASTICSEARCH_URL=http://localhost:9200
+ELASTICSEARCH_URL=http://elasticsearch:9200
 EMBEDDING_DEVICE=cuda
 ADMIN_API_KEY=your-secure-admin-key
 LOG_LEVEL=INFO
@@ -250,20 +235,22 @@ LOG_LEVEL=INFO
 
 See the [Configuration](#configuration) section for all available variables.
 
-### 4. Start the API Server
+### 3. Build and Start the API + Frontend
 
 ```bash
-uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+docker compose up -d --build streamlit api
 ```
 
-On startup the server will:
+This builds and starts both the **api** (FastAPI backend with GPU passthrough) and the **streamlit** (frontend) containers. The Elasticsearch service defined in `docker-compose.yml` will also start automatically since the `api` service depends on it.
+
+On startup the API server will:
 1. Initialize the tenant database (SQLite) and in-memory rate limiter.
 2. Connect to Elasticsearch and create the index (if it doesn't exist).
 3. Extract the model archive (if not already extracted).
 4. Load the Phi-3.5 Mini model in 4-bit quantization.
 5. Initialize the RAG pipeline and conversation store.
 
-### 5. Create a Tenant and Index the Dataset
+### 4. Create a Tenant and Index the Dataset
 
 ```bash
 # Create a tenant
@@ -273,14 +260,10 @@ curl -X POST http://localhost:8000/api/v1/admin/tenants \
   -d '{"name": "My Tenant"}'
 
 # Index arXiv metadata (use the tenant id from the response above)
-python -m src.services.indexer --tenant-id <tenant-uuid>
+docker compose exec api python -m src.services.indexer --tenant-id <tenant-uuid>
 ```
 
-### 6. Start the Streamlit Frontend
-
-```bash
-streamlit run src/ui/app.py
-```
+Open the UI at **http://localhost:8501**.
 
 ## Indexing the Dataset
 
