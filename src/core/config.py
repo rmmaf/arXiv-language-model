@@ -32,9 +32,19 @@ class Settings(BaseSettings):
     pdf_download_timeout: float = 30.0
     pdf_base_url: str = "https://arxiv.org/pdf"
 
+    llm_timeout: float = 300.0
+    api_request_timeout: float = 600.0
+
     indexer_batch_size: int = 2000
     encoder_batch_size: int = 64
     log_level: str = "INFO"
+
+    # Multi-tenancy
+    tenant_db_path: str = "data/tenants.db"
+    admin_api_key: str = "change-me-in-production"
+    default_rate_limit: int = 30
+    base_chunk_size: int = 1000
+    min_chunk_size: int = 400
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

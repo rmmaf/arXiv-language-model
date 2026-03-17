@@ -22,8 +22,11 @@ RETRY_BACKOFF_BASE = 2.0
 class AsyncPDFReader:
     """Fetches arXiv PDFs in memory, extracts text, and splits into chunks."""
 
-    def __init__(self) -> None:
-        self._splitter = RecursiveCharacterTextSplitter(
+    def __init__(
+        self,
+        splitter: RecursiveCharacterTextSplitter | None = None,
+    ) -> None:
+        self._splitter = splitter or RecursiveCharacterTextSplitter(
             chunk_size=settings.chunk_size,
             chunk_overlap=settings.chunk_overlap,
         )

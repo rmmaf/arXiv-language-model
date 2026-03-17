@@ -22,9 +22,11 @@ services:
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - ./src:/app/src
     environment:
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - EMBEDDING_DEVICE=cuda
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-change-me-in-production}
     deploy:
       resources:
         reservations:
@@ -35,6 +37,23 @@ services:
     depends_on:
       elasticsearch:
         condition: service_healthy
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./src/ui:/app/src/ui
+    environment:
+      - API_URL=http://api:8000
+      - TENANT_NAME=${TENANT_NAME:-}
+      - API_KEY_DEFAULT=${API_KEY_DEFAULT:-}
+      - API_REQUEST_TIMEOUT=${API_REQUEST_TIMEOUT:-600}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
+    depends_on:
+      - api
 
 volumes:
   es_data:
