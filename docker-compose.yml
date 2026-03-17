@@ -48,6 +48,7 @@ services:
       - TENANT_NAME=${TENANT_NAME:-}
       - API_KEY_DEFAULT=${API_KEY_DEFAULT:-}
       - API_REQUEST_TIMEOUT=${API_REQUEST_TIMEOUT:-600}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
     depends_on:
       - api
 

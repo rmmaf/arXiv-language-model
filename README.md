@@ -69,7 +69,9 @@ arXiv-language-model/
 │   │   ├── pdf_reader.py          # Async PDF downloader + text extractor + chunker
 │   │   └── rag_chain.py           # RAG orchestration: search → PDF → re-rank → LLM
 │   └── ui/
-│       └── app.py                 # Streamlit web frontend
+│       ├── app.py                 # Streamlit web frontend (single-tenant)
+│       └── pages/
+│           └── 1_Admin.py         # Admin dashboard with per-tenant tabs
 ├── docker-compose.yml             # Multi-service orchestration (ES + API + UI)
 ├── Dockerfile                     # CUDA-enabled container for the API
 ├── Dockerfile.ui                  # Lightweight container for the Streamlit frontend
@@ -254,6 +256,16 @@ The UI displays:
 - The generated answer from the LLM
 - A list of source papers with links to their arXiv pages
 - Total processing time
+
+### Admin Dashboard
+
+Navigate to the **Admin** page via the Streamlit sidebar. Enter your `ADMIN_API_KEY` to authenticate. The dashboard provides:
+
+- **One tab per active tenant** — each tab is a fully functional RAG interface that sends requests using that tenant's API key.
+- **Tenant creation** — the last tab ("+ New Tenant") lets you create a new tenant and displays the generated API key for copying.
+- **Tenant deactivation** — each tenant tab includes a deactivation button with confirmation.
+
+To pre-fill the admin key field automatically, set the `ADMIN_API_KEY` environment variable in your `.env` file or pass it to the `streamlit` service in `docker-compose.yml`.
 
 ### cURL Example
 

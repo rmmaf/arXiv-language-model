@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from src.api.schemas import TenantCreate, TenantListItem, TenantResponse
+from src.api.schemas import TenantCreate, TenantResponse
 from src.core.auth import require_admin
 from src.core.tenants import TenantManager
 
@@ -41,14 +41,15 @@ async def create_tenant(
     )
 
 
-@admin_router.get("/tenants", response_model=list[TenantListItem])
-async def list_tenants(request: Request) -> list[TenantListItem]:
+@admin_router.get("/tenants", response_model=list[TenantResponse])
+async def list_tenants(request: Request) -> list[TenantResponse]:
     manager = _get_manager(request)
     tenants = await manager.list_tenants()
     return [
-        TenantListItem(
+        TenantResponse(
             id=t.id,
             name=t.name,
+            api_key=t.api_key,
             rate_limit=t.rate_limit,
             is_active=t.is_active,
             created_at=t.created_at,
