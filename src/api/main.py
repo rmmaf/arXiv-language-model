@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.api.admin_routes import admin_router
 from src.api.routes import router
 from src.core.config import settings
+from src.core.conversation import ConversationStore
 from src.core.elastic import ElasticClient
 from src.core.llm import LLMManager
 from src.core.rate_limiter import RateLimiter, RequestHistory
@@ -46,6 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.llm_manager = llm_manager
 
     app.state.rag_service = RAGService(elastic=elastic, llm_manager=llm_manager)
+    app.state.conversation_store = ConversationStore()
 
     logger.info("Application ready")
     yield

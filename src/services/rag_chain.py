@@ -12,16 +12,20 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 
 from src.core.config import settings
+from src.core.conversation import ConversationStore
 from src.core.elastic import ElasticClient
 from src.core.llm import LLMManager
 from src.services.pdf_reader import AsyncPDFReader
 
 logger = logging.getLogger(__name__)
 
+MAX_HISTORY_TURNS = 4
+
 RAG_PROMPT = PromptTemplate.from_template(
     "You are a research assistant. Use ONLY the context below to answer the question.\n"
     "If the context is insufficient, say so clearly.\n\n"
     "Context:\n{context}\n\n"
+    "Conversation History:\n{chat_history}\n\n"
     "Question: {question}\n\n"
     "Answer:"
 )
@@ -84,62 +88,107 @@ class RAGService:
         ranked_indices = np.argsort(similarities)[::-1][:top_n]
         return [chunks[i] for i in ranked_indices]
 
+    @staticmethod
+    def _format_chat_history(history: list[dict[str, str]]) -> str:
+        """Format recent chat history turns into a readable string."""
+        if not history:
+            return "(none)"
+        recent = history[-(MAX_HISTORY_TURNS * 2):]
+        lines: list[str] = []
+        for msg in recent:
+            role = "User" if msg["role"] == "user" else "Assistant"
+            lines.append(f"{role}: {msg['content']}")
+        return "\n".join(lines)
+
     async def ask(
         self,
         question: str,
         tenant_id: str,
+        conversation_store: ConversationStore,
         top_k: int | None = None,
         active_tenant_count: int = 1,
+        conversation_id: str | None = None,
+        fetch_new_papers: bool = True,
     ) -> dict[str, Any]:
-        """Run the full RAG pipeline scoped to *tenant_id*."""
+        """Run the RAG pipeline scoped to *tenant_id*.
+
+        When *conversation_id* is provided and *fetch_new_papers* is False the
+        expensive search + PDF download steps are skipped and the stored
+        context is reused for a follow-up question.
+        """
         start = time.perf_counter()
         k = top_k or settings.top_k_results
 
         logger.info("RAG query [tenant=%s]: %s", tenant_id, question[:120])
 
-        # #region agent log
-        import json as _json, time as _time
-        with open("data/debug-36bb97.log", "a", encoding="utf-8") as _f:
-            _f.write(_json.dumps({"sessionId":"36bb97","hypothesisId":"H2","location":"rag_chain.py:ask","message":"RAG ask called","data":{"tenant_id":tenant_id,"question_prefix":question[:80],"top_k":k},"timestamp":int(_time.time()*1000)}) + "\n")
-        # #endregion
-
-        query_vector = self._embed([question])[0]
-
-        search_results = await self._elastic.hybrid_search(
-            query_text=question,
-            query_vector=query_vector.tolist(),
-            tenant_id=tenant_id,
-            top_k=k,
+        existing_conv = (
+            conversation_store.get(conversation_id) if conversation_id else None
+        )
+        chat_history_str = self._format_chat_history(
+            existing_conv.chat_history if existing_conv else []
         )
 
-        if not search_results:
-            return {
-                "answer": "No relevant papers found for your question.",
-                "sources": [],
-                "processing_time_seconds": time.perf_counter() - start,
-            }
-
-        paper_ids = [r["paper_id"] for r in search_results]
-        logger.info("Downloading PDFs for papers: %s", paper_ids)
-
-        pdf_reader = self._build_pdf_reader(active_tenant_count)
-        chunks_by_paper = await pdf_reader.process_papers(paper_ids)
-
-        all_chunks: list[str] = []
-        for pid in paper_ids:
-            all_chunks.extend(chunks_by_paper.get(pid, []))
-
-        if not all_chunks:
-            context_lines = []
-            for r in search_results:
-                context_lines.append(f"Title: {r['title']}\nAbstract: {r['abstract']}")
-            context = "\n\n---\n\n".join(context_lines)
-            logger.warning("No PDF text extracted; falling back to abstracts")
+        if existing_conv and not fetch_new_papers:
+            context = existing_conv.context
+            sources = existing_conv.sources
+            logger.info("Reusing stored context for conversation %s", conversation_id)
         else:
-            top_chunks = self._rerank_chunks(query_vector, all_chunks, top_n=5)
-            context = "\n\n---\n\n".join(top_chunks)
+            query_vector = self._embed([question])[0]
 
-        prompt_text = RAG_PROMPT.format(context=context, question=question)
+            search_results = await self._elastic.hybrid_search(
+                query_text=question,
+                query_vector=query_vector.tolist(),
+                tenant_id=tenant_id,
+                top_k=k,
+            )
+
+            if not search_results:
+                conv_id = conversation_store.create(context="", sources=[])
+                return {
+                    "answer": "No relevant papers found for your question.",
+                    "sources": [],
+                    "processing_time_seconds": time.perf_counter() - start,
+                    "conversation_id": conv_id,
+                }
+
+            paper_ids = [r["paper_id"] for r in search_results]
+            logger.info("Downloading PDFs for papers: %s", paper_ids)
+
+            pdf_reader = self._build_pdf_reader(active_tenant_count)
+            chunks_by_paper = await pdf_reader.process_papers(paper_ids)
+
+            all_chunks: list[str] = []
+            for pid in paper_ids:
+                all_chunks.extend(chunks_by_paper.get(pid, []))
+
+            if not all_chunks:
+                context_lines = []
+                for r in search_results:
+                    context_lines.append(
+                        f"Title: {r['title']}\nAbstract: {r['abstract']}"
+                    )
+                context = "\n\n---\n\n".join(context_lines)
+                logger.warning("No PDF text extracted; falling back to abstracts")
+            else:
+                top_chunks = self._rerank_chunks(query_vector, all_chunks, top_n=5)
+                context = "\n\n---\n\n".join(top_chunks)
+
+            sources = [
+                {
+                    "paper_id": r["paper_id"],
+                    "title": r["title"],
+                    "score": r["score"],
+                }
+                for r in search_results
+            ]
+
+            if existing_conv:
+                conversation_store.update_context(conversation_id, context, sources)
+            # query_vector not needed beyond this branch
+
+        prompt_text = RAG_PROMPT.format(
+            context=context, chat_history=chat_history_str, question=question
+        )
         logger.debug("Prompt length: %d characters", len(prompt_text))
 
         try:
@@ -155,27 +204,29 @@ class RAGService:
                     "The model took too long to generate a response. "
                     "Try a more specific question or reduce top_k."
                 ),
-                "sources": [
+                "sources": sources if existing_conv else [
                     {"paper_id": r["paper_id"], "title": r["title"], "score": r["score"]}
                     for r in search_results
                 ],
                 "processing_time_seconds": round(elapsed, 3),
+                "conversation_id": conversation_id or "",
             }
 
-        sources = [
-            {
-                "paper_id": r["paper_id"],
-                "title": r["title"],
-                "score": r["score"],
-            }
-            for r in search_results
-        ]
+        answer_text = answer.strip() if isinstance(answer, str) else str(answer).strip()
+
+        if existing_conv:
+            conv_id = conversation_id
+        else:
+            conv_id = conversation_store.create(context=context, sources=sources)
+
+        conversation_store.append_turn(conv_id, question, answer_text)
 
         elapsed = time.perf_counter() - start
         logger.info("RAG pipeline completed in %.2f seconds", elapsed)
 
         return {
-            "answer": answer.strip() if isinstance(answer, str) else str(answer).strip(),
+            "answer": answer_text,
             "sources": sources,
             "processing_time_seconds": round(elapsed, 3),
+            "conversation_id": conv_id,
         }

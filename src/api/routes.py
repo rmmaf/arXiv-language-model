@@ -25,6 +25,7 @@ async def ask(
     rag_service = request.app.state.rag_service
     tenant_manager = request.app.state.tenant_manager
     history: RequestHistory = request.app.state.request_history
+    conversation_store = request.app.state.conversation_store
     active_count = await tenant_manager.count_active()
 
     try:
@@ -32,8 +33,11 @@ async def ask(
             rag_service.ask(
                 question=body.question,
                 tenant_id=tenant.id,
+                conversation_store=conversation_store,
                 top_k=body.top_k,
                 active_tenant_count=active_count,
+                conversation_id=body.conversation_id,
+                fetch_new_papers=body.fetch_new_papers,
             ),
             timeout=settings.api_request_timeout,
         )

@@ -6,6 +6,14 @@ class AskRequest(BaseModel):
 
     question: str = Field(..., min_length=10, max_length=1000)
     top_k: int = Field(default=3, ge=1, le=10)
+    conversation_id: str | None = Field(
+        default=None,
+        description="Existing conversation ID to continue. Omit to start a new conversation.",
+    )
+    fetch_new_papers: bool = Field(
+        default=True,
+        description="When False, reuses the context from the existing conversation instead of searching for new papers.",
+    )
 
 
 class SourceDocument(BaseModel):
@@ -22,6 +30,7 @@ class AskResponse(BaseModel):
     answer: str
     sources: list[SourceDocument]
     processing_time_seconds: float
+    conversation_id: str
 
 
 class HealthResponse(BaseModel):
