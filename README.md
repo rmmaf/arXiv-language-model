@@ -70,8 +70,9 @@ arXiv-language-model/
 │   │   └── rag_chain.py           # RAG orchestration: search → PDF → re-rank → LLM
 │   └── ui/
 │       └── app.py                 # Streamlit web frontend
-├── docker-compose.yml             # Multi-service orchestration (ES + API)
+├── docker-compose.yml             # Multi-service orchestration (ES + API + UI)
 ├── Dockerfile                     # CUDA-enabled container for the API
+├── Dockerfile.ui                  # Lightweight container for the Streamlit frontend
 ├── requirements.txt               # Python dependencies
 └── README.md
 ```
@@ -133,9 +134,12 @@ The application will automatically extract it to `models/phi-3.5-mini-instruct/`
 docker compose up --build -d
 ```
 
-This starts two services:
+This starts three services:
 - **elasticsearch** — Single-node Elasticsearch 8.14 on port `9200`
 - **api** — The FastAPI backend on port `8000` (with GPU passthrough)
+- **streamlit** — The Streamlit web UI on port `8501`
+
+After all services are up, open the UI at **http://localhost:8501**.
 
 ### 2. Index the Dataset
 
@@ -146,17 +150,6 @@ docker compose exec api python -m src.services.indexer
 ```
 
 This reads the JSONL dataset line-by-line (low memory footprint), encodes embeddings in batches on the GPU, and bulk-indexes documents into Elasticsearch. Progress is logged to stdout.
-
-### 3. Launch the Streamlit Frontend
-
-The Streamlit UI is not included in the Docker Compose setup, so run it on the host:
-
-```bash
-pip install streamlit httpx
-streamlit run src/ui/app.py
-```
-
-By default it connects to the API at `http://localhost:8000`. Override with the `API_URL` environment variable if needed.
 
 ### Stopping
 
@@ -255,7 +248,7 @@ The Elasticsearch index uses a hybrid mapping with:
 
 ### Streamlit UI
 
-Open the Streamlit app in your browser (default: `http://localhost:8501`). Type a research question, select the number of results (`top_k`), and click **Ask**.
+The Streamlit UI starts automatically with `docker compose up`. Open your browser at **http://localhost:8501**. Type a research question, select the number of results (`top_k`), and click **Ask**.
 
 The UI displays:
 - The generated answer from the LLM

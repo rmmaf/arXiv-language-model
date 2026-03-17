@@ -37,5 +37,19 @@ services:
       elasticsearch:
         condition: service_healthy
 
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+      - TENANT_NAME=${TENANT_NAME:-}
+      - API_KEY_DEFAULT=${API_KEY_DEFAULT:-}
+      - API_REQUEST_TIMEOUT=${API_REQUEST_TIMEOUT:-600}
+    depends_on:
+      - api
+
 volumes:
   es_data:
