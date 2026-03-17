@@ -60,3 +60,23 @@ class TenantListItem(BaseModel):
     rate_limit: int
     is_active: bool
     created_at: str
+
+
+class ServerMetrics(BaseModel):
+    """Server monitoring metrics."""
+
+    active_tenants: int
+    requests_last_minute: int
+    current_chunk_size: int
+    tenant_requests: dict[str, int]
+
+
+class RequestLogEntry(BaseModel):
+    """Single entry in the request history log."""
+
+    timestamp: str
+    tenant_id: str
+    tenant_name: str
+    question: str
+    status: str
+    processing_time: float | None = None

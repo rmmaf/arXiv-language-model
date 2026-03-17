@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from src.api.schemas import AskRequest, AskResponse, HealthResponse
 from src.core.auth import get_current_tenant
 from src.core.config import settings
-from src.core.rate_limiter import check_rate_limit
+from src.core.rate_limiter import RequestHistory, check_rate_limit
 from src.core.tenants import Tenant
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,7 @@ async def ask(
 
     rag_service = request.app.state.rag_service
     tenant_manager = request.app.state.tenant_manager
+    history: RequestHistory = request.app.state.request_history
     active_count = await tenant_manager.count_active()
 
     try:
@@ -38,11 +39,17 @@ async def ask(
         )
     except asyncio.TimeoutError:
         logger.error("Request timed out after %.0fs", settings.api_request_timeout)
+        history.log(tenant.id, tenant.name, body.question, "timeout")
         raise HTTPException(status_code=504, detail="Request timed out")
     except Exception as exc:
         logger.exception("RAG pipeline error")
+        history.log(tenant.id, tenant.name, body.question, "error")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    history.log(
+        tenant.id, tenant.name, body.question,
+        "success", result.get("processing_time_seconds"),
+    )
     return AskResponse(**result)
 
 

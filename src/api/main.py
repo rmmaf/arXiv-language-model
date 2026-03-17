@@ -12,7 +12,7 @@ from src.api.routes import router
 from src.core.config import settings
 from src.core.elastic import ElasticClient
 from src.core.llm import LLMManager
-from src.core.rate_limiter import RateLimiter
+from src.core.rate_limiter import RateLimiter, RequestHistory
 from src.core.tenants import TenantManager
 from src.services.rag_chain import RAGService
 
@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Tenant database initialised")
 
     app.state.rate_limiter = RateLimiter()
+    app.state.request_history = RequestHistory()
 
     elastic = ElasticClient()
     await elastic.connect()

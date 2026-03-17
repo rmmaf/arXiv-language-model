@@ -97,6 +97,12 @@ class RAGService:
 
         logger.info("RAG query [tenant=%s]: %s", tenant_id, question[:120])
 
+        # #region agent log
+        import json as _json, time as _time
+        with open("data/debug-36bb97.log", "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps({"sessionId":"36bb97","hypothesisId":"H2","location":"rag_chain.py:ask","message":"RAG ask called","data":{"tenant_id":tenant_id,"question_prefix":question[:80],"top_k":k},"timestamp":int(_time.time()*1000)}) + "\n")
+        # #endregion
+
         query_vector = self._embed([question])[0]
 
         search_results = await self._elastic.hybrid_search(
