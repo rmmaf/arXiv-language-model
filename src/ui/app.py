@@ -8,13 +8,21 @@ import streamlit as st
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 API_TIMEOUT = float(os.getenv("API_REQUEST_TIMEOUT", "600"))
 ARXIV_ABS_BASE = "https://arxiv.org/abs"
+TENANT_NAME = os.getenv("TENANT_NAME", "")
 
-st.set_page_config(page_title="arXiv RAG", page_icon="📄", layout="centered")
+page_title = f"arXiv RAG — {TENANT_NAME}" if TENANT_NAME else "arXiv RAG"
+st.set_page_config(page_title=page_title, page_icon="📄", layout="centered")
 st.title("arXiv Research Assistant")
+if TENANT_NAME:
+    st.caption(f"Tenant: **{TENANT_NAME}**")
 st.caption("Hybrid semantic + lexical search over arXiv papers with a local LLM")
 
 # --- Sidebar: tenant authentication ---
-api_key = st.sidebar.text_input("API Key", type="password", help="Tenant API key for authentication")
+default_key = os.getenv("API_KEY_DEFAULT", "")
+api_key = st.sidebar.text_input(
+    "API Key", value=default_key, type="password",
+    help="Tenant API key for authentication",
+)
 if not api_key:
     st.sidebar.warning("Enter your API Key to use the assistant.")
 
