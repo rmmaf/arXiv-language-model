@@ -14,14 +14,19 @@ class AskRequest(BaseModel):
         default=True,
         description="When False, reuses the context from the existing conversation instead of searching for new papers.",
     )
+    custom_document_ids: list[str] | None = Field(
+        default=None,
+        description="IDs of custom uploaded documents to include as context.",
+    )
 
 
 class SourceDocument(BaseModel):
-    """Reference to an arXiv paper returned as a source."""
+    """Reference to a source document (arXiv paper or custom upload)."""
 
     paper_id: str
     title: str
     score: float
+    source_type: str = "arxiv"
 
 
 class AskResponse(BaseModel):
@@ -89,3 +94,23 @@ class RequestLogEntry(BaseModel):
     question: str
     status: str
     processing_time: float | None = None
+
+
+# --------------- Custom document schemas ---------------
+
+class DocumentUploadResponse(BaseModel):
+    """Response after a successful custom PDF upload."""
+
+    id: str
+    filename: str
+    total_chunks: int
+    uploaded_at: str
+
+
+class DocumentListItem(BaseModel):
+    """Summary of a custom uploaded document."""
+
+    id: str
+    filename: str
+    total_chunks: int
+    uploaded_at: str

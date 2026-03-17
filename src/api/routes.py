@@ -38,6 +38,7 @@ async def ask(
                 active_tenant_count=active_count,
                 conversation_id=body.conversation_id,
                 fetch_new_papers=body.fetch_new_papers,
+                custom_document_ids=body.custom_document_ids,
             ),
             timeout=settings.api_request_timeout,
         )

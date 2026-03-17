@@ -23,6 +23,7 @@ services:
       - ./data:/app/data
       - ./models:/app/models
       - ./src:/app/src
+      - uploads_data:/app/data/uploads
     environment:
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - EMBEDDING_DEVICE=cuda
@@ -57,3 +58,4 @@ services:
 
 volumes:
   es_data:
+  uploads_data:

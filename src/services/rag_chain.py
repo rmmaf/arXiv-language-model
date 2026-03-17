@@ -100,6 +100,32 @@ class RAGService:
             lines.append(f"{role}: {msg['content']}")
         return "\n".join(lines)
 
+    async def _fetch_custom_chunks(
+        self,
+        query_vector: np.ndarray,
+        tenant_id: str,
+        document_ids: list[str],
+    ) -> tuple[list[str], list[dict[str, Any]]]:
+        """Retrieve chunks and source metadata from custom uploaded documents."""
+        results = await self._elastic.search_custom_documents(
+            query_vector=query_vector.tolist(),
+            tenant_id=tenant_id,
+            document_ids=document_ids,
+            top_k=10,
+        )
+        chunks = [r["content"] for r in results]
+        seen: dict[str, dict[str, Any]] = {}
+        for r in results:
+            did = r["document_id"]
+            if did not in seen:
+                seen[did] = {
+                    "paper_id": did,
+                    "title": r["filename"],
+                    "score": r["score"],
+                    "source_type": "custom_upload",
+                }
+        return chunks, list(seen.values())
+
     async def ask(
         self,
         question: str,
@@ -109,12 +135,16 @@ class RAGService:
         active_tenant_count: int = 1,
         conversation_id: str | None = None,
         fetch_new_papers: bool = True,
+        custom_document_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Run the RAG pipeline scoped to *tenant_id*.
 
         When *conversation_id* is provided and *fetch_new_papers* is False the
         expensive search + PDF download steps are skipped and the stored
         context is reused for a follow-up question.
+
+        When *custom_document_ids* is provided, chunks from those uploaded
+        documents are merged with arXiv results before re-ranking.
         """
         start = time.perf_counter()
         k = top_k or settings.top_k_results
@@ -128,63 +158,82 @@ class RAGService:
             existing_conv.chat_history if existing_conv else []
         )
 
-        if existing_conv and not fetch_new_papers:
+        if existing_conv and not fetch_new_papers and not custom_document_ids:
             context = existing_conv.context
             sources = existing_conv.sources
             logger.info("Reusing stored context for conversation %s", conversation_id)
         else:
             query_vector = self._embed([question])[0]
 
-            search_results = await self._elastic.hybrid_search(
-                query_text=question,
-                query_vector=query_vector.tolist(),
-                tenant_id=tenant_id,
-                top_k=k,
-            )
+            # -- arXiv search --
+            arxiv_chunks: list[str] = []
+            sources: list[dict[str, Any]] = []
+            search_results: list[dict[str, Any]] = []
 
-            if not search_results:
+            if fetch_new_papers or not existing_conv:
+                search_results = await self._elastic.hybrid_search(
+                    query_text=question,
+                    query_vector=query_vector.tolist(),
+                    tenant_id=tenant_id,
+                    top_k=k,
+                )
+
+                if search_results:
+                    paper_ids = [r["paper_id"] for r in search_results]
+                    logger.info("Downloading PDFs for papers: %s", paper_ids)
+
+                    pdf_reader = self._build_pdf_reader(active_tenant_count)
+                    chunks_by_paper = await pdf_reader.process_papers(paper_ids)
+
+                    for pid in paper_ids:
+                        arxiv_chunks.extend(chunks_by_paper.get(pid, []))
+
+                    if not arxiv_chunks:
+                        context_lines = []
+                        for r in search_results:
+                            context_lines.append(
+                                f"Title: {r['title']}\nAbstract: {r['abstract']}"
+                            )
+                        arxiv_chunks = context_lines
+                        logger.warning("No PDF text extracted; falling back to abstracts")
+
+                    sources = [
+                        {
+                            "paper_id": r["paper_id"],
+                            "title": r["title"],
+                            "score": r["score"],
+                            "source_type": "arxiv",
+                        }
+                        for r in search_results
+                    ]
+
+            # -- Custom document chunks --
+            custom_chunks: list[str] = []
+            if custom_document_ids:
+                custom_chunks, custom_sources = await self._fetch_custom_chunks(
+                    query_vector, tenant_id, custom_document_ids,
+                )
+                sources.extend(custom_sources)
+
+            all_chunks = arxiv_chunks + custom_chunks
+
+            if not all_chunks and not search_results:
                 conv_id = conversation_store.create(context="", sources=[])
                 return {
-                    "answer": "No relevant papers found for your question.",
+                    "answer": "No relevant papers or documents found for your question.",
                     "sources": [],
                     "processing_time_seconds": time.perf_counter() - start,
                     "conversation_id": conv_id,
                 }
 
-            paper_ids = [r["paper_id"] for r in search_results]
-            logger.info("Downloading PDFs for papers: %s", paper_ids)
-
-            pdf_reader = self._build_pdf_reader(active_tenant_count)
-            chunks_by_paper = await pdf_reader.process_papers(paper_ids)
-
-            all_chunks: list[str] = []
-            for pid in paper_ids:
-                all_chunks.extend(chunks_by_paper.get(pid, []))
-
-            if not all_chunks:
-                context_lines = []
-                for r in search_results:
-                    context_lines.append(
-                        f"Title: {r['title']}\nAbstract: {r['abstract']}"
-                    )
-                context = "\n\n---\n\n".join(context_lines)
-                logger.warning("No PDF text extracted; falling back to abstracts")
-            else:
+            if all_chunks:
                 top_chunks = self._rerank_chunks(query_vector, all_chunks, top_n=5)
                 context = "\n\n---\n\n".join(top_chunks)
-
-            sources = [
-                {
-                    "paper_id": r["paper_id"],
-                    "title": r["title"],
-                    "score": r["score"],
-                }
-                for r in search_results
-            ]
+            else:
+                context = ""
 
             if existing_conv:
                 conversation_store.update_context(conversation_id, context, sources)
-            # query_vector not needed beyond this branch
 
         prompt_text = RAG_PROMPT.format(
             context=context, chat_history=chat_history_str, question=question
@@ -204,10 +253,7 @@ class RAGService:
                     "The model took too long to generate a response. "
                     "Try a more specific question or reduce top_k."
                 ),
-                "sources": sources if existing_conv else [
-                    {"paper_id": r["paper_id"], "title": r["title"], "score": r["score"]}
-                    for r in search_results
-                ],
+                "sources": sources,
                 "processing_time_seconds": round(elapsed, 3),
                 "conversation_id": conversation_id or "",
             }

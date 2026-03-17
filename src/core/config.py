@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     base_chunk_size: int = 1000
     min_chunk_size: int = 400
 
+    # Custom document uploads
+    custom_documents_index: str = "custom_documents"
+    upload_dir: str = "data/uploads"
+    max_upload_size_mb: int = 50
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @property

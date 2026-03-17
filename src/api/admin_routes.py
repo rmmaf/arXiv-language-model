@@ -8,6 +8,7 @@ from src.api.schemas import RequestLogEntry, ServerMetrics, TenantCreate, Tenant
 from src.core.auth import require_admin
 from src.core.rate_limiter import RequestHistory
 from src.core.tenants import TenantManager
+from src.services.document_processor import DocumentProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,13 @@ async def deactivate_tenant(tenant_id: str, request: Request) -> None:
     changed = await manager.deactivate(tenant_id)
     if not changed:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    logger.info("Deactivated tenant %s", tenant_id)
+
+    processor: DocumentProcessor = request.app.state.document_processor
+    cleaned = await processor.delete_all_by_tenant(tenant_id)
+    logger.info(
+        "Deactivated tenant %s and cleaned up %d custom documents",
+        tenant_id, cleaned,
+    )
 
 
 @admin_router.get("/request-history", response_model=list[RequestLogEntry])
