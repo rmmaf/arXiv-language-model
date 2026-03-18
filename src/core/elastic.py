@@ -82,12 +82,17 @@ class ElasticClient:
         query_vector: list[float],
         tenant_id: str,
         top_k: int | None = None,
+        use_text_search: bool = True,
     ) -> list[dict[str, Any]]:
         """Run a hybrid BM25 + kNN search scoped to *tenant_id*.
 
         Uses Elasticsearch 8.x native kNN for the vector part (HNSW index)
         instead of brute-force script_score, which is critical
         for large indices.
+
+        When *use_text_search* is False only the kNN vector leg runs,
+        which avoids BM25 keyword noise when the query originates from
+        document content rather than user-typed keywords.
         """
         k = top_k or settings.top_k_results
         knn_candidates = max(k * 10, 100)
@@ -101,10 +106,24 @@ class ElasticClient:
             }
         }
 
-        response = await self.client.search(
-            index=settings.index_name,
-            size=k,
-            query={
+        search_kwargs: dict[str, Any] = {
+            "index": settings.index_name,
+            "size": k,
+            "knn": {
+                "field": "embedding",
+                "query_vector": query_vector,
+                "k": k,
+                "num_candidates": knn_candidates,
+                "filter": tenant_filter,
+            },
+            "source": [
+                "paper_id", "title", "abstract",
+                "categories", "authors",
+            ],
+        }
+
+        if use_text_search:
+            search_kwargs["query"] = {
                 "bool": {
                     "must": {
                         "multi_match": {
@@ -115,16 +134,9 @@ class ElasticClient:
                     },
                     "filter": tenant_filter,
                 }
-            },
-            knn={
-                "field": "embedding",
-                "query_vector": query_vector,
-                "k": k,
-                "num_candidates": knn_candidates,
-                "filter": tenant_filter,
-            },
-            source=["paper_id", "title", "abstract", "categories", "authors"],
-        )
+            }
+
+        response = await self.client.search(**search_kwargs)
 
         results: list[dict[str, Any]] = []
         for hit in response["hits"]["hits"]:
@@ -132,9 +144,10 @@ class ElasticClient:
             doc["score"] = hit["_score"]
             results.append(doc)
 
+        mode = "hybrid" if use_text_search else "vector-only"
         logger.info(
-            "Hybrid search returned %d results for query: %.80s...",
-            len(results), query_text,
+            "%s search returned %d results for query: %.80s...",
+            mode, len(results), query_text,
         )
         return results
 
@@ -255,6 +268,44 @@ class ElasticClient:
         logger.info(
             "Custom document search returned %d chunks for tenant %s",
             len(results), tenant_id,
+        )
+        return results
+
+    async def get_custom_document_chunks(
+        self,
+        tenant_id: str,
+        document_ids: list[str],
+        max_chunks: int = 30,
+    ) -> list[dict[str, Any]]:
+        """Fetch all chunks for the given documents, sorted by position."""
+        idx = settings.custom_documents_index
+        if not await self.client.indices.exists(index=idx):
+            return []
+
+        doc_filter: dict[str, Any] = {
+            "bool": {
+                "must": [
+                    {"term": {"tenant_id": tenant_id}},
+                    {"terms": {"document_id": document_ids}},
+                ],
+            }
+        }
+
+        response = await self.client.search(
+            index=idx,
+            size=max_chunks,
+            query=doc_filter,
+            sort=[{"chunk_index": "asc"}],
+            source=["document_id", "filename", "content", "chunk_index"],
+        )
+
+        results: list[dict[str, Any]] = []
+        for hit in response["hits"]["hits"]:
+            results.append(hit["_source"])
+
+        logger.info(
+            "Fetched %d chunks for documents %s (tenant %s)",
+            len(results), document_ids, tenant_id,
         )
         return results
 

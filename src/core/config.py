@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     custom_boost_factor: float = 1.5
     custom_mild_boost_factor: float = 1.2
     custom_reserved_slots: int = 2
+    custom_content_weight: float = 0.7
 
     # Async task manager
     task_ttl_seconds: int = 3600

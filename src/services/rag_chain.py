@@ -165,6 +165,35 @@ class RAGService:
         ranked_indices = np.argsort(similarities)[::-1][:top_n]
         return [chunks[i] for i in ranked_indices]
 
+    def _build_document_search_vector(
+        self,
+        question_vector: np.ndarray,
+        doc_chunks: list[dict[str, Any]],
+    ) -> np.ndarray:
+        """Blend question embedding with mean document embedding.
+
+        The document content is weighted by ``custom_content_weight``
+        so that the arXiv vector search focuses on the document's topic
+        rather than the literal words in the user's question.
+        """
+        contents = [c["content"] for c in doc_chunks]
+        if not contents:
+            return question_vector
+
+        chunk_vectors = self._embed(contents)
+        doc_vector = np.mean(chunk_vectors, axis=0)
+
+        w = settings.custom_content_weight
+        blended = w * doc_vector + (1.0 - w) * question_vector
+        blended = blended / (np.linalg.norm(blended) + 1e-10)
+
+        logger.info(
+            "Built document search vector: content_weight=%.2f, "
+            "doc_chunks=%d",
+            w, len(contents),
+        )
+        return blended
+
     @staticmethod
     def _format_chat_history(history: list[dict[str, str]]) -> str:
         """Format recent chat history turns into a readable string."""
@@ -262,15 +291,48 @@ class RAGService:
             arxiv_chunks: list[str] = []
             sources: list[dict[str, Any]] = []
             search_results: list[dict[str, Any]] = []
+            custom_chunks: list[str] = []
+
+            search_vector = query_vector
+
+            if custom_document_ids:
+                raw_doc_chunks = (
+                    await self._elastic.get_custom_document_chunks(
+                        tenant_id=tenant_id,
+                        document_ids=custom_document_ids,
+                    )
+                )
+                if raw_doc_chunks:
+                    search_vector = (
+                        self._build_document_search_vector(
+                            query_vector, raw_doc_chunks,
+                        )
+                    )
+                    custom_chunks = [
+                        f"[Source: {c['filename']}]\n{c['content']}"
+                        for c in raw_doc_chunks
+                    ]
+                    seen: dict[str, dict[str, Any]] = {}
+                    for c in raw_doc_chunks:
+                        did = c["document_id"]
+                        if did not in seen:
+                            seen[did] = {
+                                "paper_id": did,
+                                "title": c["filename"],
+                                "score": 0.0,
+                                "source_type": "custom_upload",
+                            }
+                    sources.extend(list(seen.values()))
 
             if fetch_new_papers or not existing_conv:
                 await asyncio.sleep(0)  # cancellation checkpoint
 
                 search_results = await self._elastic.hybrid_search(
                     query_text=question,
-                    query_vector=query_vector.tolist(),
+                    query_vector=search_vector.tolist(),
                     tenant_id=tenant_id,
                     top_k=k,
+                    use_text_search=not bool(custom_chunks),
                 )
 
                 if search_results:
@@ -300,7 +362,7 @@ class RAGService:
                             "falling back to abstracts",
                         )
 
-                    sources = [
+                    sources.extend([
                         {
                             "paper_id": r["paper_id"],
                             "title": r["title"],
@@ -308,17 +370,7 @@ class RAGService:
                             "source_type": "arxiv",
                         }
                         for r in search_results
-                    ]
-
-            custom_chunks: list[str] = []
-            if custom_document_ids:
-                custom_chunks, custom_sources = (
-                    await self._fetch_custom_chunks(
-                        query_vector, tenant_id,
-                        custom_document_ids,
-                    )
-                )
-                sources.extend(custom_sources)
+                    ])
 
             all_chunks = arxiv_chunks + custom_chunks
 
@@ -368,7 +420,7 @@ class RAGService:
                     reserved = 0
 
                 top_chunks = self._rerank_chunks(
-                    query_vector,
+                    search_vector,
                     all_chunks,
                     top_n=5,
                     chunk_is_custom=chunk_is_custom,
