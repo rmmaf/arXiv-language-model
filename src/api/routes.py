@@ -47,15 +47,22 @@ async def ask(
     conv_id = body.conversation_id
     if not conv_id:
         title = body.question[:60] + ("..." if len(body.question) > 60 else "")
-        conv_id = await conversation_store.create(tenant_id=tenant.id, title=title)
+        conv_id = await conversation_store.create(
+            tenant_id=tenant.id, title=title,
+        )
 
     conv = await conversation_store.get(conv_id)
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     if conv["tenant_id"] != tenant.id:
-        raise HTTPException(status_code=403, detail="Conversation belongs to another tenant")
+        raise HTTPException(
+            status_code=403,
+            detail="Conversation belongs to another tenant",
+        )
 
-    await conversation_store.add_message(conv_id, "user", body.question)
+    await conversation_store.add_message(
+        conv_id, "user", body.question,
+    )
 
     coro = rag_service.ask(
         question=body.question,
@@ -68,7 +75,9 @@ async def ask(
         custom_document_ids=body.custom_document_ids,
     )
 
-    task_id = task_manager.submit(coro, tenant_id=tenant.id, conversation_id=conv_id)
+    task_id = task_manager.submit(
+        coro, tenant_id=tenant.id, conversation_id=conv_id,
+    )
 
     history.log(tenant.id, tenant.name, body.question, "submitted")
 
@@ -91,15 +100,26 @@ async def get_task_status(
     if state is None:
         raise HTTPException(status_code=404, detail="Task not found")
     if state.tenant_id != tenant.id:
-        raise HTTPException(status_code=403, detail="Task belongs to another tenant")
+        raise HTTPException(
+            status_code=403,
+            detail="Task belongs to another tenant",
+        )
 
     result = None
     if state.status == "completed" and state.result:
         result = AskResult(
             answer=state.result["answer"],
-            sources=[SourceDocument(**s) for s in state.result.get("sources", [])],
-            processing_time_seconds=state.result.get("processing_time_seconds", 0),
-            conversation_id=state.result.get("conversation_id", state.conversation_id),
+            sources=[
+                SourceDocument(**s)
+                for s in state.result.get("sources", [])
+            ],
+            processing_time_seconds=state.result.get(
+                "processing_time_seconds", 0,
+            ),
+            conversation_id=state.result.get(
+                "conversation_id",
+                state.conversation_id,
+            ),
         )
 
     return TaskStatusResponse(
@@ -122,7 +142,10 @@ async def cancel_task(
     if state is None:
         raise HTTPException(status_code=404, detail="Task not found")
     if state.tenant_id != tenant.id:
-        raise HTTPException(status_code=403, detail="Task belongs to another tenant")
+        raise HTTPException(
+            status_code=403,
+            detail="Task belongs to another tenant",
+        )
 
     cancelled = task_manager.cancel(task_id)
     return {"cancelled": cancelled}
@@ -157,7 +180,10 @@ async def list_conversations(
     ]
 
 
-@router.get("/conversations/{conversation_id}", response_model=ConversationDetail)
+@router.get(
+    "/conversations/{conversation_id}",
+    response_model=ConversationDetail,
+)
 async def get_conversation(
     request: Request,
     conversation_id: str,
@@ -171,23 +197,40 @@ async def get_conversation(
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     if conv["tenant_id"] != tenant.id:
-        raise HTTPException(status_code=403, detail="Conversation belongs to another tenant")
+        raise HTTPException(
+            status_code=403,
+            detail="Conversation belongs to another tenant",
+        )
 
-    active_task = task_manager.get_active_task_for_conversation(conversation_id)
+    active_task = task_manager.get_active_task_for_conversation(
+        conversation_id,
+    )
 
     return ConversationDetail(
         conversation_id=conv["conversation_id"],
         title=conv["title"],
         messages=[
-            MessageItem(role=m["role"], content=m["content"], created_at=m["created_at"])
+            MessageItem(
+                role=m["role"],
+                content=m["content"],
+                created_at=m["created_at"],
+            )
             for m in conv["messages"]
         ],
-        sources=[SourceDocument(**s) for s in conv["sources"]],
-        pending_task_id=active_task.task_id if active_task else None,
+        sources=[
+            SourceDocument(**s) for s in conv["sources"]
+        ],
+        pending_task_id=(
+            active_task.task_id if active_task else None
+        ),
     )
 
 
-@router.post("/conversations", response_model=ConversationCreateResponse, status_code=201)
+@router.post(
+    "/conversations",
+    response_model=ConversationCreateResponse,
+    status_code=201,
+)
 async def create_conversation(
     request: Request,
     tenant: Tenant = Depends(get_current_tenant),
@@ -195,8 +238,12 @@ async def create_conversation(
     """Create a new empty conversation."""
     conversation_store = request.app.state.conversation_store
     title = "New conversation"
-    conv_id = await conversation_store.create(tenant_id=tenant.id, title=title)
-    return ConversationCreateResponse(id=conv_id, title=title)
+    conv_id = await conversation_store.create(
+        tenant_id=tenant.id, title=title,
+    )
+    return ConversationCreateResponse(
+        id=conv_id, title=title,
+    )
 
 
 @router.delete("/conversations/{conversation_id}", status_code=204)
@@ -212,10 +259,15 @@ async def delete_conversation(
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     if conv["tenant_id"] != tenant.id:
-        raise HTTPException(status_code=403, detail="Conversation belongs to another tenant")
+        raise HTTPException(
+            status_code=403,
+            detail="Conversation belongs to another tenant",
+        )
 
     task_manager: TaskManager = request.app.state.task_manager
-    active_task = task_manager.get_active_task_for_conversation(conversation_id)
+    active_task = task_manager.get_active_task_for_conversation(
+        conversation_id,
+    )
     if active_task:
         task_manager.cancel(active_task.task_id)
 
@@ -239,4 +291,6 @@ async def health(request: Request) -> HealthResponse:
     llm_ok = request.app.state.llm_manager.is_loaded
 
     status = "healthy" if (es_ok and llm_ok) else "degraded"
-    return HealthResponse(status=status, elasticsearch=es_ok, llm_loaded=llm_ok)
+    return HealthResponse(
+        status=status, elasticsearch=es_ok, llm_loaded=llm_ok,
+    )

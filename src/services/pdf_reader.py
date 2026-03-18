@@ -42,31 +42,44 @@ class AsyncPDFReader:
                 try:
                     response = await client.get(url)
                     response.raise_for_status()
-                    logger.debug("Downloaded PDF for %s (%d bytes)", paper_id, len(response.content))
+                    logger.debug(
+                        "Downloaded PDF for %s (%d bytes)",
+                        paper_id, len(response.content),
+                    )
                     return response.content
 
                 except httpx.HTTPStatusError as exc:
                     if exc.response.status_code == 429:
                         wait = RETRY_BACKOFF_BASE**attempt
                         logger.warning(
-                            "Rate-limited on %s, retrying in %.1fs (attempt %d/%d)",
+                            "Rate-limited on %s, retrying in "
+                            "%.1fs (attempt %d/%d)",
                             paper_id, wait, attempt, MAX_RETRIES,
                         )
                         await asyncio.sleep(wait)
                         continue
-                    logger.error("HTTP %d fetching PDF %s: %s", exc.response.status_code, paper_id, exc)
+                    logger.error(
+                        "HTTP %d fetching PDF %s: %s",
+                        exc.response.status_code,
+                        paper_id, exc,
+                    )
                     raise
 
                 except httpx.RequestError as exc:
                     if attempt < MAX_RETRIES:
                         wait = RETRY_BACKOFF_BASE**attempt
                         logger.warning(
-                            "Network error fetching %s, retrying in %.1fs (attempt %d/%d): %s",
+                            "Network error fetching %s, retrying "
+                            "in %.1fs (attempt %d/%d): %s",
                             paper_id, wait, attempt, MAX_RETRIES, exc,
                         )
                         await asyncio.sleep(wait)
                         continue
-                    logger.error("Failed to fetch PDF %s after %d attempts: %s", paper_id, MAX_RETRIES, exc)
+                    logger.error(
+                        "Failed to fetch PDF %s after "
+                        "%d attempts: %s",
+                        paper_id, MAX_RETRIES, exc,
+                    )
                     raise
 
         raise RuntimeError(f"Exhausted retries for PDF {paper_id}")
@@ -100,8 +113,10 @@ class AsyncPDFReader:
         logger.info("Paper %s: extracted %d chunks", paper_id, len(chunks))
         return chunks
 
-    async def process_papers(self, paper_ids: list[str]) -> dict[str, list[str]]:
-        """Process multiple papers concurrently. Returns {paper_id: [chunks]}."""
+    async def process_papers(
+        self, paper_ids: list[str],
+    ) -> dict[str, list[str]]:
+        """Process multiple papers concurrently."""
         tasks = [self._process_single(pid) for pid in paper_ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 

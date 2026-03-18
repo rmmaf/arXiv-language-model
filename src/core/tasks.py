@@ -30,7 +30,7 @@ class TaskState:
 
 
 class TaskManager:
-    """Manages background RAG tasks with polling, cancellation and TTL cleanup."""
+    """Manages background RAG tasks with polling and TTL."""
 
     def __init__(self, ttl_seconds: float | None = None) -> None:
         self._ttl = ttl_seconds or settings.task_ttl_seconds
@@ -53,7 +53,10 @@ class TaskManager:
         asyncio_task = loop.create_task(self._run(state, coro))
         state.asyncio_task = asyncio_task
         self._tasks[task_id] = state
-        logger.info("Task %s submitted for tenant %s / conv %s", task_id, tenant_id, conversation_id)
+        logger.info(
+            "Task %s submitted for tenant %s / conv %s",
+            task_id, tenant_id, conversation_id,
+        )
         return task_id
 
     async def _run(self, state: TaskState, coro: Any) -> None:
@@ -89,14 +92,17 @@ class TaskManager:
         logger.info("Task %s cancel requested", task_id)
         return True
 
-    def get_active_task_for_conversation(self, conversation_id: str) -> TaskState | None:
+    def get_active_task_for_conversation(
+        self, conversation_id: str,
+    ) -> TaskState | None:
         for state in self._tasks.values():
-            if state.conversation_id == conversation_id and state.status == "processing":
+            if (state.conversation_id == conversation_id
+                    and state.status == "processing"):
                 return state
         return None
 
     def get_active_tasks_for_tenant(self, tenant_id: str) -> dict[str, str]:
-        """Return {conversation_id: task_id} for all processing tasks of a tenant."""
+        """Return {conv_id: task_id} for processing tasks."""
         result: dict[str, str] = {}
         for state in self._tasks.values():
             if state.tenant_id == tenant_id and state.status == "processing":

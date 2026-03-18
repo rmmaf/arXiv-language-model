@@ -1,8 +1,8 @@
 """FastAPI application entry-point with lifespan management."""
 
 import logging
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,7 +30,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Startup: connect to ES, load LLM, init tenants, build RAG service.  Shutdown: release."""
+    """Startup: connect to ES, load LLM, init tenants.
+
+    Shutdown: release resources.
+    """
     logger.info("Starting up ...")
 
     tenant_manager = TenantManager()
@@ -83,7 +86,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="ArXiv Hybrid RAG API",
     version="1.0.0",
-    description="Multi-tenant hybrid semantic + lexical search over arXiv papers with local LLM.",
+    description=(
+        "Multi-tenant hybrid semantic + lexical search "
+        "over arXiv papers with local LLM."
+    ),
     lifespan=lifespan,
 )
 

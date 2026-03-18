@@ -23,7 +23,7 @@ class DocumentMeta:
 
 
 class DocumentManager:
-    """Manages custom document metadata in the same SQLite database as tenants."""
+    """Manages custom document metadata in SQLite."""
 
     def __init__(self) -> None:
         self._db_path = settings.tenant_db_path
@@ -63,9 +63,13 @@ class DocumentManager:
         )
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
-                "INSERT INTO custom_documents (id, tenant_id, filename, total_chunks, uploaded_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (doc.id, doc.tenant_id, doc.filename, doc.total_chunks, doc.uploaded_at),
+                "INSERT INTO custom_documents "
+                "(id, tenant_id, filename, total_chunks, uploaded_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    doc.id, doc.tenant_id, doc.filename,
+                    doc.total_chunks, doc.uploaded_at,
+                ),
             )
             await db.commit()
         return doc
@@ -74,16 +78,22 @@ class DocumentManager:
         async with aiosqlite.connect(self._db_path) as db:
             cursor = await db.execute(
                 "SELECT id, tenant_id, filename, total_chunks, uploaded_at "
-                "FROM custom_documents WHERE tenant_id = ? ORDER BY uploaded_at DESC",
+                "FROM custom_documents "
+                "WHERE tenant_id = ? ORDER BY uploaded_at DESC",
                 (tenant_id,),
             )
             rows = await cursor.fetchall()
         return [
-            DocumentMeta(id=r[0], tenant_id=r[1], filename=r[2], total_chunks=r[3], uploaded_at=r[4])
+            DocumentMeta(
+                id=r[0], tenant_id=r[1], filename=r[2],
+                total_chunks=r[3], uploaded_at=r[4],
+            )
             for r in rows
         ]
 
-    async def get_document(self, document_id: str, tenant_id: str) -> DocumentMeta | None:
+    async def get_document(
+        self, document_id: str, tenant_id: str,
+    ) -> DocumentMeta | None:
         async with aiosqlite.connect(self._db_path) as db:
             cursor = await db.execute(
                 "SELECT id, tenant_id, filename, total_chunks, uploaded_at "
@@ -93,7 +103,10 @@ class DocumentManager:
             row = await cursor.fetchone()
         if row is None:
             return None
-        return DocumentMeta(id=row[0], tenant_id=row[1], filename=row[2], total_chunks=row[3], uploaded_at=row[4])
+        return DocumentMeta(
+            id=row[0], tenant_id=row[1], filename=row[2],
+            total_chunks=row[3], uploaded_at=row[4],
+        )
 
     async def delete_document(self, document_id: str, tenant_id: str) -> bool:
         async with aiosqlite.connect(self._db_path) as db:
@@ -105,7 +118,7 @@ class DocumentManager:
             return cursor.rowcount > 0
 
     async def delete_all_by_tenant(self, tenant_id: str) -> int:
-        """Remove all documents belonging to a tenant. Returns count deleted."""
+        """Remove all documents belonging to a tenant."""
         async with aiosqlite.connect(self._db_path) as db:
             cursor = await db.execute(
                 "DELETE FROM custom_documents WHERE tenant_id = ?",

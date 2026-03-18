@@ -27,7 +27,9 @@ class LLMManager:
     @property
     def pipeline(self) -> HuggingFacePipeline:
         if self._pipeline is None:
-            raise RuntimeError("LLM pipeline not initialised. Call load() first.")
+            raise RuntimeError(
+                "LLM pipeline not initialised. Call load() first."
+            )
         return self._pipeline
 
     @property
@@ -35,7 +37,7 @@ class LLMManager:
         return self._pipeline is not None
 
     def ensure_model_extracted(self) -> None:
-        """Extract the .tar.gz archive if the model directory does not exist."""
+        """Extract the .tar.gz if the model dir does not exist."""
         model_dir = settings.model_dir
         archive = settings.model_archive
 
@@ -46,7 +48,10 @@ class LLMManager:
         if not archive.exists():
             raise FileNotFoundError(f"Model archive not found: {archive}")
 
-        logger.info("Extracting model archive %s -> %s ...", archive, model_dir)
+        logger.info(
+            "Extracting model archive %s -> %s ...",
+            archive, model_dir,
+        )
         model_dir.mkdir(parents=True, exist_ok=True)
 
         with tarfile.open(archive, "r:gz") as tar:

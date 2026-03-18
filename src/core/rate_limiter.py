@@ -42,7 +42,10 @@ class RequestHistory:
                 timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 tenant_id=tenant_id,
                 tenant_name=tenant_name,
-                question=question if len(question) <= 120 else question[:117] + "...",
+                question=(
+                    question if len(question) <= 120
+                    else question[:117] + "..."
+                ),
                 status=status,
                 processing_time=processing_time,
             )
@@ -59,7 +62,7 @@ class RateLimiter:
         self._windows: dict[str, list[float]] = {}
 
     def check(self, tenant_id: str, limit: int) -> bool:
-        """Return True if the request is allowed, False if rate limit exceeded."""
+        """Return True if allowed, False if rate limit exceeded."""
         now = time.monotonic()
         cutoff = now - 60.0
 
@@ -78,10 +81,10 @@ class RateLimiter:
         """Return metrics about requests in the last minute."""
         now = time.monotonic()
         cutoff = now - 60.0
-        
+
         tenant_requests = {}
         total_requests = 0
-        
+
         for tenant_id, timestamps in list(self._windows.items()):
             valid_timestamps = [t for t in timestamps if t > cutoff]
             if valid_timestamps:
@@ -91,7 +94,7 @@ class RateLimiter:
                 total_requests += count
             else:
                 self._windows.pop(tenant_id, None)
-                
+
         return {
             "requests_last_minute": total_requests,
             "tenant_requests": tenant_requests
@@ -99,10 +102,13 @@ class RateLimiter:
 
 
 async def check_rate_limit(request: Request, tenant: Tenant) -> None:
-    """FastAPI-compatible callable that raises 429 when the tenant exceeds its limit."""
+    """Raise 429 when the tenant exceeds its rate limit."""
     limiter: RateLimiter = request.app.state.rate_limiter
     if not limiter.check(tenant.id, tenant.rate_limit):
         raise HTTPException(
             status_code=429,
-            detail=f"Rate limit exceeded ({tenant.rate_limit} requests/minute)",
+            detail=(
+                f"Rate limit exceeded "
+                f"({tenant.rate_limit} requests/minute)"
+            ),
         )

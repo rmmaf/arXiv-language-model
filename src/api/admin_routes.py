@@ -4,7 +4,12 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from src.api.schemas import RequestLogEntry, ServerMetrics, TenantCreate, TenantResponse
+from src.api.schemas import (
+    RequestLogEntry,
+    ServerMetrics,
+    TenantCreate,
+    TenantResponse,
+)
 from src.core.auth import require_admin
 from src.core.rate_limiter import RequestHistory
 from src.core.tenants import TenantManager
@@ -76,7 +81,9 @@ async def deactivate_tenant(tenant_id: str, request: Request) -> None:
 
 
 @admin_router.get("/request-history", response_model=list[RequestLogEntry])
-async def get_request_history(request: Request, limit: int = 50) -> list[RequestLogEntry]:
+async def get_request_history(
+    request: Request, limit: int = 50,
+) -> list[RequestLogEntry]:
     history: RequestHistory = request.app.state.request_history
     return [
         RequestLogEntry(
@@ -96,12 +103,12 @@ async def get_metrics(request: Request) -> ServerMetrics:
     manager = _get_manager(request)
     rate_limiter = request.app.state.rate_limiter
     rag_service = request.app.state.rag_service
-    
+
     active_count = await manager.count_active()
     chunk_size = rag_service._adaptive_chunk_size(active_count)
-    
+
     metrics = rate_limiter.get_metrics()
-    
+
     return ServerMetrics(
         active_tenants=active_count,
         requests_last_minute=metrics["requests_last_minute"],

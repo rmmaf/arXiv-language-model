@@ -1,4 +1,5 @@
-"""Processes custom PDF uploads: text extraction, chunking, embedding, and indexing."""
+"""Processes custom PDF uploads: extraction, chunking,
+embedding, and indexing."""
 
 import logging
 import shutil
@@ -46,7 +47,9 @@ class DocumentProcessor:
         if not chunks:
             raise ValueError(f"No chunks produced from '{filename}'")
 
-        embeddings = self._encoder.encode(chunks, show_progress_bar=False).tolist()
+        embeddings = self._encoder.encode(
+            chunks, show_progress_bar=False,
+        ).tolist()
 
         doc_meta = await self._doc_manager.save_document(
             tenant_id=tenant_id,
@@ -75,7 +78,9 @@ class DocumentProcessor:
         return doc_meta
 
     async def delete_document(self, document_id: str, tenant_id: str) -> bool:
-        deleted_meta = await self._doc_manager.delete_document(document_id, tenant_id)
+        deleted_meta = await self._doc_manager.delete_document(
+            document_id, tenant_id,
+        )
         if not deleted_meta:
             return False
 
@@ -84,11 +89,14 @@ class DocumentProcessor:
         pdf_path = Path(settings.upload_dir) / tenant_id / f"{document_id}.pdf"
         pdf_path.unlink(missing_ok=True)
 
-        logger.info("Deleted document %s for tenant %s", document_id, tenant_id)
+        logger.info(
+            "Deleted document %s for tenant %s",
+            document_id, tenant_id,
+        )
         return True
 
     async def delete_all_by_tenant(self, tenant_id: str) -> int:
-        """Remove all custom documents for a tenant (ES + filesystem + SQLite)."""
+        """Remove all custom docs for a tenant."""
         count = await self._doc_manager.delete_all_by_tenant(tenant_id)
         await self._elastic.delete_custom_documents_by_tenant(tenant_id)
 

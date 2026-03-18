@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
 document_router = APIRouter(prefix="/api/v1/documents")
 
 
-@document_router.post("/", response_model=DocumentUploadResponse, status_code=201)
+@document_router.post(
+    "/", response_model=DocumentUploadResponse,
+    status_code=201,
+)
 async def upload_document(
     request: Request,
     file: UploadFile,
@@ -22,7 +25,10 @@ async def upload_document(
 ) -> DocumentUploadResponse:
     """Upload a custom PDF to use as RAG context."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are accepted.",
+        )
 
     max_bytes = settings.max_upload_size_mb * 1024 * 1024
     pdf_bytes = await file.read()

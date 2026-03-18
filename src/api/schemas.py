@@ -8,11 +8,18 @@ class AskRequest(BaseModel):
     top_k: int = Field(default=3, ge=1, le=10)
     conversation_id: str | None = Field(
         default=None,
-        description="Existing conversation ID to continue. Omit to start a new conversation.",
+        description=(
+            "Existing conversation ID to continue. "
+            "Omit to start a new conversation."
+        ),
     )
     fetch_new_papers: bool = Field(
         default=True,
-        description="When False, reuses the context from the existing conversation instead of searching for new papers.",
+        description=(
+            "When False, reuses the context from the "
+            "existing conversation instead of "
+            "searching for new papers."
+        ),
     )
     custom_document_ids: list[str] | None = Field(
         default=None,
@@ -37,7 +44,7 @@ class AskSubmittedResponse(BaseModel):
 
 
 class AskResult(BaseModel):
-    """Final result from the RAG pipeline (returned inside TaskStatusResponse)."""
+    """Final result from the RAG pipeline."""
 
     answer: str
     sources: list[SourceDocument]

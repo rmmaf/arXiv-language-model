@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     index_name: str = "arxiv_papers"
 
     data_path: str = "data/arxiv-metadata-oai-snapshot.json"
-    model_archive_path: str = "models/phi-3-pytorch-phi-3.5-mini-instruct-v2.tar.gz"
+    model_archive_path: str = (
+        "models/phi-3-pytorch-phi-3.5-mini-instruct-v2.tar.gz"
+    )
     model_extracted_path: str = "models/phi-3.5-mini-instruct"
 
     embedding_model_name: str = "all-MiniLM-L6-v2"

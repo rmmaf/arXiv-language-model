@@ -99,7 +99,8 @@ async def run_indexing(tenant_id: str) -> None:
     if settings.embedding_device == "cpu":
         logger.warning(
             "Embedding running on CPU — indexing will be extremely slow. "
-            "Set EMBEDDING_DEVICE=cuda or use a machine with GPU for 10-50x speedup."
+            "Set EMBEDDING_DEVICE=cuda or use a machine "
+            "with GPU for 10-50x speedup."
         )
 
     logger.info("Indexing for tenant: %s", tenant_id)
@@ -108,7 +109,8 @@ async def run_indexing(tenant_id: str) -> None:
         settings.embedding_model_name, device=settings.embedding_device
     )
     logger.info(
-        "Loaded embedding model '%s' on %s  |  indexer_batch=%d  encoder_batch=%d",
+        "Loaded embedding model '%s' on %s  |  "
+        "indexer_batch=%d  encoder_batch=%d",
         settings.embedding_model_name,
         settings.embedding_device,
         settings.indexer_batch_size,
@@ -179,7 +181,9 @@ async def run_indexing(tenant_id: str) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Index arXiv metadata for a tenant")
+    parser = argparse.ArgumentParser(
+        description="Index arXiv metadata for a tenant",
+    )
     parser.add_argument(
         "--tenant-id",
         required=True,

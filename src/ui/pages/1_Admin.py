@@ -1,4 +1,4 @@
-"""Admin dashboard — one tab per tenant with full RAG interface + tenant CRUD."""
+"""Admin dashboard: one tab per tenant with RAG + CRUD."""
 
 import os
 
@@ -9,7 +9,11 @@ API_URL = os.getenv("API_URL", "http://localhost:8000")
 API_TIMEOUT = float(os.getenv("API_REQUEST_TIMEOUT", "600"))
 ARXIV_ABS_BASE = "https://arxiv.org/abs"
 
-st.set_page_config(page_title="Admin — arXiv RAG", page_icon="⚙️", layout="wide")
+st.set_page_config(
+    page_title="Admin \u2014 arXiv RAG",
+    page_icon="\u2699\ufe0f",
+    layout="wide",
+)
 st.title("Tenant Administration")
 
 # --------------- Sidebar: admin authentication ---------------
@@ -34,7 +38,9 @@ def _fetch_tenants() -> list[dict] | None:
             timeout=API_TIMEOUT,
         )
     except httpx.RequestError as exc:
-        st.error(f"Could not reach the API at {API_URL}: {exc}")
+        st.error(
+            f"Could not reach the API at {API_URL}: {exc}"
+        )
         return None
     if resp.status_code == 403:
         st.error("Invalid admin key.")
@@ -62,10 +68,10 @@ tabs = st.tabs(tab_names)
 
 with tabs[0]:
     st.subheader("Server Monitoring")
-    
+
     if st.button("Refresh Metrics"):
         st.rerun()
-        
+
     try:
         resp = httpx.get(
             f"{API_URL}/api/v1/admin/metrics",
@@ -74,29 +80,41 @@ with tabs[0]:
         )
         if resp.status_code == 200:
             metrics = resp.json()
-            
+
             col1, col2, col3 = st.columns(3)
             col1.metric("Active Tenants", metrics["active_tenants"])
-            col2.metric("Requests/min", metrics["requests_last_minute"])
+            col2.metric(
+                "Requests/min",
+                metrics["requests_last_minute"],
+            )
             col3.metric("Chunk Size", metrics["current_chunk_size"])
-            
+
             st.divider()
             st.subheader("Requests per Tenant (last minute)")
-            
+
             tenant_reqs = metrics["tenant_requests"]
             if tenant_reqs:
-                tenant_map = {t["id"]: t["name"] for t in all_tenants}
+                tenant_map = {
+                    t["id"]: t["name"] for t in all_tenants
+                }
                 import pandas as pd
                 chart_data = pd.DataFrame({
-                    "Tenant": [tenant_map.get(tid, tid) for tid in tenant_reqs.keys()],
-                    "Requests": list(tenant_reqs.values())
+                    "Tenant": [
+                        tenant_map.get(tid, tid)
+                        for tid in tenant_reqs.keys()
+                    ],
+                    "Requests": list(tenant_reqs.values()),
                 })
-                st.bar_chart(chart_data, x="Tenant", y="Requests")
+                st.bar_chart(
+                    chart_data, x="Tenant", y="Requests",
+                )
             else:
                 st.info("No requests in the last minute.")
-                
+
         else:
-            st.error(f"Failed to fetch metrics: {resp.status_code}")
+            st.error(
+                f"Failed to fetch metrics: {resp.status_code}"
+            )
     except httpx.RequestError as exc:
         st.error(f"Could not connect to the API: {exc}")
 
@@ -137,7 +155,10 @@ with tabs[0]:
             else:
                 st.info("No requests recorded yet.")
         else:
-            st.error(f"Failed to fetch request history: {hist_resp.status_code}")
+            st.error(
+                "Failed to fetch request history: "
+                f"{hist_resp.status_code}"
+            )
     except httpx.RequestError as exc:
         st.error(f"Could not connect to the API: {exc}")
 
@@ -172,7 +193,10 @@ for tab, tenant in zip(tabs[1: len(active_tenants) + 1], active_tenants):
 
         question = st.text_input(
             "Question",
-            placeholder="e.g. What are the latest advances in vision transformers?",
+            placeholder=(
+                "e.g. What are the latest advances "
+                "in vision transformers?"
+            ),
             key=f"question_{tid}",
         )
         top_k = st.number_input(
@@ -196,18 +220,31 @@ for tab, tenant in zip(tabs[1: len(active_tenants) + 1], active_tenants):
                         timeout=API_TIMEOUT,
                     )
                     if response.status_code == 401:
-                        st.error("Tenant API key rejected. The tenant may have been deactivated.")
+                        st.error(
+                            "Tenant API key rejected. "
+                            "The tenant may have been "
+                            "deactivated."
+                        )
                         st.stop()
                     if response.status_code == 429:
-                        st.warning("Rate limit exceeded for this tenant.")
+                        st.warning(
+                            "Rate limit exceeded for this tenant."
+                        )
                         st.stop()
                     response.raise_for_status()
                     data = response.json()
                 except httpx.HTTPStatusError as exc:
-                    st.error(f"API error {exc.response.status_code}: {exc.response.text}")
+                    st.error(
+                        f"API error "
+                        f"{exc.response.status_code}: "
+                        f"{exc.response.text}"
+                    )
                     st.stop()
                 except httpx.RequestError as exc:
-                    st.error(f"Could not reach the API at {API_URL}: {exc}")
+                    st.error(
+                        f"Could not reach the API "
+                        f"at {API_URL}: {exc}"
+                    )
                     st.stop()
 
             st.subheader("Answer")
@@ -217,10 +254,14 @@ for tab, tenant in zip(tabs[1: len(active_tenants) + 1], active_tenants):
             for src in data["sources"]:
                 link = f"{ARXIV_ABS_BASE}/{src['paper_id']}"
                 st.markdown(
-                    f"- [{src['title']}]({link})  \n  score: `{src['score']:.4f}`"
+                    f"- [{src['title']}]({link})  \n"
+                    f"  score: `{src['score']:.4f}`"
                 )
 
-            st.caption(f"Processing time: {data['processing_time_seconds']:.2f}s")
+            st.caption(
+                f"Processing time: "
+                f"{data['processing_time_seconds']:.2f}s"
+            )
 
 # --------------- New Tenant tab ---------------
 
@@ -229,15 +270,22 @@ with tabs[-1]:
 
     new_name = st.text_input("Tenant name", key="new_tenant_name")
     new_rate_limit = st.number_input(
-        "Rate limit (req/min)", min_value=1, max_value=1000, value=30, step=1,
+        "Rate limit (req/min)",
+        min_value=1, max_value=1000, value=30, step=1,
         key="new_tenant_rate_limit",
     )
 
-    if st.button("Create tenant", type="primary", disabled=not new_name):
+    if st.button(
+        "Create tenant", type="primary",
+        disabled=not new_name,
+    ):
         try:
             cr = httpx.post(
                 f"{API_URL}/api/v1/admin/tenants",
-                json={"name": new_name, "rate_limit": new_rate_limit},
+                json={
+                    "name": new_name,
+                    "rate_limit": new_rate_limit,
+                },
                 headers={
                     "X-Admin-Key": admin_key,
                     "Content-Type": "application/json",
@@ -246,12 +294,23 @@ with tabs[-1]:
             )
             if cr.status_code == 201:
                 created = cr.json()
-                st.success(f"Tenant **{created['name']}** created!")
-                st.markdown("**API Key** (copy it now — it won't be shown again):")
+                st.success(
+                    f"Tenant **{created['name']}** created!"
+                )
+                st.markdown(
+                    "**API Key** (copy it now "
+                    "\u2014 it won't be shown again):"
+                )
                 st.code(created["api_key"])
             else:
                 cr.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            st.error(f"Error: {exc.response.status_code} — {exc.response.text}")
+            st.error(
+                f"Error: {exc.response.status_code} "
+                f"\u2014 {exc.response.text}"
+            )
         except httpx.RequestError as exc:
-            st.error(f"Could not reach the API at {API_URL}: {exc}")
+            st.error(
+                f"Could not reach the API "
+                f"at {API_URL}: {exc}"
+            )

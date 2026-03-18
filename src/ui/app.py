@@ -21,7 +21,10 @@ st.set_page_config(page_title=page_title, page_icon="📄", layout="centered")
 st.title("arXiv Research Assistant")
 if TENANT_NAME:
     st.caption(f"Tenant: **{TENANT_NAME}**")
-st.caption("Hybrid semantic + lexical search over arXiv papers with a local LLM")
+st.caption(
+    "Hybrid semantic + lexical search over arXiv "
+    "papers with a local LLM"
+)
 
 # ------------------------------------------------------------------ #
 #  Session state defaults
@@ -44,7 +47,7 @@ for key, default in _DEFAULTS.items():
 #  Helper: load a conversation from the backend
 # ------------------------------------------------------------------ #
 def _load_conversation(conv_id: str, api_key: str) -> bool:
-    """Fetch conversation detail and populate session state. Returns True on success."""
+    """Fetch conversation detail and populate session state."""
     try:
         resp = httpx.get(
             f"{API_URL}/api/v1/conversations/{conv_id}",
@@ -106,7 +109,8 @@ if api_key:
     if not st.session_state.conversations_loaded:
         _refresh_conversation_list(api_key)
         st.session_state.conversations_loaded = True
-        if st.session_state.conversation_list and not st.session_state.conversation_id:
+        if (st.session_state.conversation_list
+                and not st.session_state.conversation_id):
             most_recent = st.session_state.conversation_list[0]
             _load_conversation(most_recent["id"], api_key)
 
@@ -140,7 +144,8 @@ if api_key:
         col_btn, col_del = st.sidebar.columns([5, 1])
         btn_type = "primary" if is_active else "secondary"
         if col_btn.button(
-            label, key=f"conv_{conv['id']}", type=btn_type, use_container_width=True,
+            label, key=f"conv_{conv['id']}",
+            type=btn_type, use_container_width=True,
         ):
             if not is_active:
                 _load_conversation(conv["id"], api_key)
@@ -167,11 +172,16 @@ if api_key:
 #  Sidebar: Settings
 # ------------------------------------------------------------------ #
 st.sidebar.divider()
-top_k = st.sidebar.number_input("top_k", min_value=1, max_value=10, value=3, step=1)
+top_k = st.sidebar.number_input(
+    "top_k", min_value=1, max_value=10, value=3, step=1,
+)
 fetch_new_papers = st.sidebar.checkbox(
     "Search new papers",
     value=False,
-    help="Check this to force a new arXiv search + PDF download for your next question.",
+    help=(
+        "Check this to force a new arXiv search "
+        "+ PDF download for your next question."
+    ),
 )
 
 # ------------------------------------------------------------------ #
@@ -192,13 +202,22 @@ if api_key:
                     try:
                         resp = httpx.post(
                             f"{API_URL}/api/v1/documents/",
-                            files={"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")},
+                            files={
+                                "file": (
+                                    uploaded_file.name,
+                                    uploaded_file.getvalue(),
+                                    "application/pdf",
+                                ),
+                            },
                             headers={"X-API-Key": api_key},
                             timeout=API_TIMEOUT,
                         )
                         if resp.status_code == 201:
                             doc = resp.json()
-                            st.success(f"Uploaded **{doc['filename']}** ({doc['total_chunks']} chunks)")
+                            st.success(
+                                f"Uploaded **{doc['filename']}** "
+                                f"({doc['total_chunks']} chunks)"
+                            )
                             st.session_state.custom_docs = []
                         else:
                             st.error(f"Upload failed: {resp.text}")
@@ -224,7 +243,10 @@ if api_key:
             checked = col1.checkbox(
                 doc["filename"],
                 key=f"doc_{doc['id']}",
-                help=f"{doc['total_chunks']} chunks — uploaded {doc['uploaded_at']}",
+                help=(
+                    f"{doc['total_chunks']} chunks "
+                    f"\u2014 uploaded {doc['uploaded_at']}"
+                ),
             )
             if checked:
                 selected_doc_ids.append(doc["id"])
@@ -260,9 +282,16 @@ if st.session_state.sources:
             source_type = src.get("source_type", "arxiv")
             if source_type == "arxiv":
                 link = f"{ARXIV_ABS_BASE}/{src['paper_id']}"
-                st.markdown(f"- [{src['title']}]({link})  \n  score: `{src['score']:.4f}`")
+                st.markdown(
+                    f"- [{src['title']}]({link})  \n"
+                    f"  score: `{src['score']:.4f}`"
+                )
             else:
-                st.markdown(f"- 📎 **{src['title']}** (custom upload)  \n  score: `{src['score']:.4f}`")
+                st.markdown(
+                    f"- \U0001f4ce **{src['title']}** "
+                    f"(custom upload)  \n"
+                    f"  score: `{src['score']:.4f}`"
+                )
 
 
 # ------------------------------------------------------------------ #
@@ -292,7 +321,9 @@ def _poll_task(task_id: str, api_key: str) -> None:
             st.rerun()
             return
 
-        status_placeholder.markdown("⏳ Searching papers and generating answer...")
+        status_placeholder.markdown(
+            "\u23f3 Searching papers and generating answer..."
+        )
 
         try:
             resp = httpx.get(
@@ -331,7 +362,10 @@ def _poll_task(task_id: str, api_key: str) -> None:
                     ]
 
                 if st.session_state.conversation_id:
-                    _load_conversation(st.session_state.conversation_id, api_key)
+                    _load_conversation(
+                        st.session_state.conversation_id,
+                        api_key,
+                    )
                 _refresh_conversation_list(api_key)
                 st.rerun()
                 return
@@ -340,11 +374,18 @@ def _poll_task(task_id: str, api_key: str) -> None:
                 st.session_state.pending_task_id = None
                 error_msg = data.get("error_message", "")
                 if status == "cancelled":
-                    status_placeholder.warning("Response generation was stopped.")
+                    status_placeholder.warning(
+                        "Response generation was stopped."
+                    )
                 else:
-                    status_placeholder.error(f"An error occurred: {error_msg}")
+                    status_placeholder.error(
+                        f"An error occurred: {error_msg}"
+                    )
                 if st.session_state.conversation_id:
-                    _load_conversation(st.session_state.conversation_id, api_key)
+                    _load_conversation(
+                        st.session_state.conversation_id,
+                        api_key,
+                    )
                 _refresh_conversation_list(api_key)
                 st.rerun()
                 return
@@ -365,7 +406,9 @@ if st.session_state.pending_task_id and api_key:
 # ------------------------------------------------------------------ #
 #  Chat input
 # ------------------------------------------------------------------ #
-if question := st.chat_input("Ask about arXiv papers...", disabled=not api_key):
+if question := st.chat_input(
+    "Ask about arXiv papers...", disabled=not api_key,
+):
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
         st.markdown(question)
@@ -391,10 +434,16 @@ if question := st.chat_input("Ask about arXiv papers...", disabled=not api_key):
             timeout=30,
         )
         if response.status_code == 401:
-            st.error("Invalid or inactive API key. Check your key and try again.")
+            st.error(
+                "Invalid or inactive API key. "
+                "Check your key and try again."
+            )
             st.stop()
         if response.status_code == 429:
-            st.warning("Rate limit exceeded. Please wait a moment and try again.")
+            st.warning(
+                "Rate limit exceeded. "
+                "Please wait a moment and try again."
+            )
             st.stop()
         response.raise_for_status()
         data = response.json()

@@ -1,4 +1,8 @@
-"""RAG orchestration: query -> embed -> hybrid search -> PDF extraction -> re-rank -> LLM answer."""
+"""RAG orchestration.
+
+query -> embed -> hybrid search -> PDF extraction ->
+re-rank -> LLM answer.
+"""
 
 import asyncio
 import logging
@@ -22,7 +26,8 @@ logger = logging.getLogger(__name__)
 MAX_HISTORY_TURNS = 4
 
 RAG_PROMPT = PromptTemplate.from_template(
-    "You are a research assistant. Use ONLY the context below to answer the question.\n"
+    "You are a research assistant. Use ONLY the context "
+    "below to answer the question.\n"
     "If the context is insufficient, say so clearly.\n\n"
     "Context:\n{context}\n\n"
     "Conversation History:\n{chat_history}\n\n"
@@ -47,7 +52,7 @@ class RAGService:
 
     @staticmethod
     def _adaptive_chunk_size(active_tenants: int) -> int:
-        """Reduce chunk size as more tenants are active to lower LLM pressure."""
+        """Reduce chunk size as tenant count grows."""
         base = settings.base_chunk_size
         minimum = settings.min_chunk_size
         if active_tenants <= 1:
@@ -106,7 +111,7 @@ class RAGService:
         tenant_id: str,
         document_ids: list[str],
     ) -> tuple[list[str], list[dict[str, Any]]]:
-        """Retrieve chunks and source metadata from custom uploaded documents."""
+        """Retrieve chunks and sources from custom documents."""
         results = await self._elastic.search_custom_documents(
             query_vector=query_vector.tolist(),
             tenant_id=tenant_id,
@@ -155,7 +160,8 @@ class RAGService:
         logger.info("RAG query [tenant=%s]: %s", tenant_id, question[:120])
 
         existing_conv = (
-            await conversation_store.get(conversation_id) if conversation_id else None
+            await conversation_store.get(conversation_id)
+            if conversation_id else None
         )
 
         chat_history = (
@@ -168,7 +174,10 @@ class RAGService:
         if existing_conv and not fetch_new_papers and not custom_document_ids:
             context = existing_conv["context"]
             sources = existing_conv["sources"]
-            logger.info("Reusing stored context for conversation %s", conversation_id)
+            logger.info(
+                "Reusing stored context for conversation %s",
+                conversation_id,
+            )
         else:
             query_vector = self._embed([question])[0]
 
@@ -193,7 +202,9 @@ class RAGService:
                     await asyncio.sleep(0)  # cancellation checkpoint
 
                     pdf_reader = self._build_pdf_reader(active_tenant_count)
-                    chunks_by_paper = await pdf_reader.process_papers(paper_ids)
+                    chunks_by_paper = await pdf_reader.process_papers(
+                        paper_ids,
+                    )
 
                     for pid in paper_ids:
                         arxiv_chunks.extend(chunks_by_paper.get(pid, []))
@@ -202,10 +213,14 @@ class RAGService:
                         context_lines = []
                         for r in search_results:
                             context_lines.append(
-                                f"Title: {r['title']}\nAbstract: {r['abstract']}"
+                                f"Title: {r['title']}\n"
+                                f"Abstract: {r['abstract']}"
                             )
                         arxiv_chunks = context_lines
-                        logger.warning("No PDF text extracted; falling back to abstracts")
+                        logger.warning(
+                            "No PDF text extracted; "
+                            "falling back to abstracts",
+                        )
 
                     sources = [
                         {
@@ -219,8 +234,11 @@ class RAGService:
 
             custom_chunks: list[str] = []
             if custom_document_ids:
-                custom_chunks, custom_sources = await self._fetch_custom_chunks(
-                    query_vector, tenant_id, custom_document_ids,
+                custom_chunks, custom_sources = (
+                    await self._fetch_custom_chunks(
+                        query_vector, tenant_id,
+                        custom_document_ids,
+                    )
                 )
                 sources.extend(custom_sources)
 
@@ -230,8 +248,13 @@ class RAGService:
                 conv_id = conversation_id or await conversation_store.create(
                     tenant_id=tenant_id
                 )
-                no_results_answer = "No relevant papers or documents found for your question."
-                await conversation_store.add_message(conv_id, "assistant", no_results_answer)
+                no_results_answer = (
+                    "No relevant papers or documents "
+                    "found for your question."
+                )
+                await conversation_store.add_message(
+                    conv_id, "assistant", no_results_answer,
+                )
                 return {
                     "answer": no_results_answer,
                     "sources": [],
@@ -240,13 +263,17 @@ class RAGService:
                 }
 
             if all_chunks:
-                top_chunks = self._rerank_chunks(query_vector, all_chunks, top_n=5)
+                top_chunks = self._rerank_chunks(
+                    query_vector, all_chunks, top_n=5,
+                )
                 context = "\n\n---\n\n".join(top_chunks)
             else:
                 context = ""
 
             if existing_conv:
-                await conversation_store.update_context(conversation_id, context, sources)
+                await conversation_store.update_context(
+                    conversation_id, context, sources,
+                )
 
         prompt_text = RAG_PROMPT.format(
             context=context, chat_history=chat_history_str, question=question
@@ -264,7 +291,8 @@ class RAGService:
             logger.info("RAG pipeline cancelled during LLM inference")
             if conversation_id:
                 await conversation_store.add_message(
-                    conversation_id, "assistant", "(Response cancelled by user)"
+                    conversation_id, "assistant",
+                    "(Response cancelled by user)",
                 )
             raise
         except asyncio.TimeoutError:
@@ -277,7 +305,9 @@ class RAGService:
             conv_id = conversation_id or await conversation_store.create(
                 tenant_id=tenant_id, context=context, sources=sources,
             )
-            await conversation_store.add_message(conv_id, "assistant", timeout_answer)
+            await conversation_store.add_message(
+                conv_id, "assistant", timeout_answer,
+            )
             return {
                 "answer": timeout_answer,
                 "sources": sources,
@@ -285,7 +315,10 @@ class RAGService:
                 "conversation_id": conv_id,
             }
 
-        answer_text = answer.strip() if isinstance(answer, str) else str(answer).strip()
+        answer_text = (
+            answer.strip() if isinstance(answer, str)
+            else str(answer).strip()
+        )
 
         if existing_conv:
             conv_id = conversation_id

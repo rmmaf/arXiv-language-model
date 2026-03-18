@@ -47,8 +47,10 @@ class ConversationStore:
                 CREATE TABLE IF NOT EXISTS messages (
                     id               INTEGER PRIMARY KEY AUTOINCREMENT,
                     conversation_id  TEXT NOT NULL
-                                     REFERENCES conversations(id) ON DELETE CASCADE,
-                    role             TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+                        REFERENCES conversations(id)
+                        ON DELETE CASCADE,
+                    role  TEXT NOT NULL
+                        CHECK(role IN ('user', 'assistant')),
                     content          TEXT NOT NULL,
                     created_at       REAL NOT NULL
                 )
@@ -78,9 +80,14 @@ class ConversationStore:
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute("PRAGMA foreign_keys = ON")
             await db.execute(
-                "INSERT INTO conversations (id, tenant_id, title, context, sources, created_at, last_accessed) "
+                "INSERT INTO conversations "
+                "(id, tenant_id, title, context, sources,"
+                " created_at, last_accessed) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (conv_id, tenant_id, title, context, json.dumps(sources or []), now, now),
+                (
+                    conv_id, tenant_id, title, context,
+                    json.dumps(sources or []), now, now,
+                ),
             )
             await db.commit()
         return conv_id
@@ -89,7 +96,8 @@ class ConversationStore:
         async with aiosqlite.connect(self._db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "SELECT id, tenant_id, title, context, sources, created_at, last_accessed "
+                "SELECT id, tenant_id, title, context,"
+                " sources, created_at, last_accessed "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             )
@@ -106,11 +114,14 @@ class ConversationStore:
             "last_accessed": row["last_accessed"],
         }
 
-    async def get_with_messages(self, conversation_id: str) -> dict[str, Any] | None:
+    async def get_with_messages(
+        self, conversation_id: str,
+    ) -> dict[str, Any] | None:
         async with aiosqlite.connect(self._db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "SELECT id, tenant_id, title, context, sources, created_at, last_accessed "
+                "SELECT id, tenant_id, title, context,"
+                " sources, created_at, last_accessed "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             )
@@ -134,7 +145,11 @@ class ConversationStore:
             "created_at": conv_row["created_at"],
             "last_accessed": conv_row["last_accessed"],
             "messages": [
-                {"role": r["role"], "content": r["content"], "created_at": r["created_at"]}
+                {
+                    "role": r["role"],
+                    "content": r["content"],
+                    "created_at": r["created_at"],
+                }
                 for r in msg_rows
             ],
         }
@@ -204,7 +219,9 @@ class ConversationStore:
     ) -> None:
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
-                "UPDATE conversations SET context = ?, sources = ?, last_accessed = ? WHERE id = ?",
+                "UPDATE conversations "
+                "SET context = ?, sources = ?, "
+                "last_accessed = ? WHERE id = ?",
                 (context, json.dumps(sources), time.time(), conversation_id),
             )
             await db.commit()
@@ -213,12 +230,18 @@ class ConversationStore:
     #  Message helpers
     # ------------------------------------------------------------------ #
 
-    async def add_message(self, conversation_id: str, role: str, content: str) -> None:
+    async def add_message(
+        self, conversation_id: str, role: str, content: str,
+    ) -> None:
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
-                "INSERT INTO messages (conversation_id, role, content, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (conversation_id, role, content, time.time()),
+                "INSERT INTO messages "
+                "(conversation_id, role, content, created_at)"
+                " VALUES (?, ?, ?, ?)",
+                (
+                    conversation_id, role,
+                    content, time.time(),
+                ),
             )
             await db.execute(
                 "UPDATE conversations SET last_accessed = ? WHERE id = ?",
@@ -226,17 +249,22 @@ class ConversationStore:
             )
             await db.commit()
 
-    async def append_turn(self, conversation_id: str, question: str, answer: str) -> None:
+    async def append_turn(
+        self, conversation_id: str,
+        question: str, answer: str,
+    ) -> None:
         now = time.time()
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
-                "INSERT INTO messages (conversation_id, role, content, created_at) "
-                "VALUES (?, 'user', ?, ?)",
+                "INSERT INTO messages "
+                "(conversation_id, role, content, created_at)"
+                " VALUES (?, 'user', ?, ?)",
                 (conversation_id, question, now),
             )
             await db.execute(
-                "INSERT INTO messages (conversation_id, role, content, created_at) "
-                "VALUES (?, 'assistant', ?, ?)",
+                "INSERT INTO messages "
+                "(conversation_id, role, content, created_at)"
+                " VALUES (?, 'assistant', ?, ?)",
                 (conversation_id, answer, now),
             )
             await db.execute(
@@ -245,7 +273,9 @@ class ConversationStore:
             )
             await db.commit()
 
-    async def get_chat_history(self, conversation_id: str) -> list[dict[str, str]]:
+    async def get_chat_history(
+        self, conversation_id: str,
+    ) -> list[dict[str, str]]:
         async with aiosqlite.connect(self._db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
