@@ -145,6 +145,9 @@ class RAGService:
 
         When *custom_document_ids* is provided, chunks from those uploaded
         documents are merged with arXiv results before re-ranking.
+
+        Supports asyncio cancellation -- CancelledError is caught at key
+        checkpoints so partial state can be persisted.
         """
         start = time.perf_counter()
         k = top_k or settings.top_k_results
@@ -152,25 +155,30 @@ class RAGService:
         logger.info("RAG query [tenant=%s]: %s", tenant_id, question[:120])
 
         existing_conv = (
-            conversation_store.get(conversation_id) if conversation_id else None
-        )
-        chat_history_str = self._format_chat_history(
-            existing_conv.chat_history if existing_conv else []
+            await conversation_store.get(conversation_id) if conversation_id else None
         )
 
+        chat_history = (
+            await conversation_store.get_chat_history(conversation_id)
+            if existing_conv
+            else []
+        )
+        chat_history_str = self._format_chat_history(chat_history)
+
         if existing_conv and not fetch_new_papers and not custom_document_ids:
-            context = existing_conv.context
-            sources = existing_conv.sources
+            context = existing_conv["context"]
+            sources = existing_conv["sources"]
             logger.info("Reusing stored context for conversation %s", conversation_id)
         else:
             query_vector = self._embed([question])[0]
 
-            # -- arXiv search --
             arxiv_chunks: list[str] = []
             sources: list[dict[str, Any]] = []
             search_results: list[dict[str, Any]] = []
 
             if fetch_new_papers or not existing_conv:
+                await asyncio.sleep(0)  # cancellation checkpoint
+
                 search_results = await self._elastic.hybrid_search(
                     query_text=question,
                     query_vector=query_vector.tolist(),
@@ -181,6 +189,8 @@ class RAGService:
                 if search_results:
                     paper_ids = [r["paper_id"] for r in search_results]
                     logger.info("Downloading PDFs for papers: %s", paper_ids)
+
+                    await asyncio.sleep(0)  # cancellation checkpoint
 
                     pdf_reader = self._build_pdf_reader(active_tenant_count)
                     chunks_by_paper = await pdf_reader.process_papers(paper_ids)
@@ -207,7 +217,6 @@ class RAGService:
                         for r in search_results
                     ]
 
-            # -- Custom document chunks --
             custom_chunks: list[str] = []
             if custom_document_ids:
                 custom_chunks, custom_sources = await self._fetch_custom_chunks(
@@ -218,9 +227,13 @@ class RAGService:
             all_chunks = arxiv_chunks + custom_chunks
 
             if not all_chunks and not search_results:
-                conv_id = conversation_store.create(context="", sources=[])
+                conv_id = conversation_id or await conversation_store.create(
+                    tenant_id=tenant_id
+                )
+                no_results_answer = "No relevant papers or documents found for your question."
+                await conversation_store.add_message(conv_id, "assistant", no_results_answer)
                 return {
-                    "answer": "No relevant papers or documents found for your question.",
+                    "answer": no_results_answer,
                     "sources": [],
                     "processing_time_seconds": time.perf_counter() - start,
                     "conversation_id": conv_id,
@@ -233,29 +246,43 @@ class RAGService:
                 context = ""
 
             if existing_conv:
-                conversation_store.update_context(conversation_id, context, sources)
+                await conversation_store.update_context(conversation_id, context, sources)
 
         prompt_text = RAG_PROMPT.format(
             context=context, chat_history=chat_history_str, question=question
         )
         logger.debug("Prompt length: %d characters", len(prompt_text))
 
+        await asyncio.sleep(0)  # cancellation checkpoint before LLM
+
         try:
             answer = await asyncio.wait_for(
                 self._llm.pipeline.ainvoke(prompt_text),
                 timeout=settings.llm_timeout,
             )
+        except asyncio.CancelledError:
+            logger.info("RAG pipeline cancelled during LLM inference")
+            if conversation_id:
+                await conversation_store.add_message(
+                    conversation_id, "assistant", "(Response cancelled by user)"
+                )
+            raise
         except asyncio.TimeoutError:
             elapsed = time.perf_counter() - start
             logger.error("LLM inference timed out after %.1fs", elapsed)
+            timeout_answer = (
+                "The model took too long to generate a response. "
+                "Try a more specific question or reduce top_k."
+            )
+            conv_id = conversation_id or await conversation_store.create(
+                tenant_id=tenant_id, context=context, sources=sources,
+            )
+            await conversation_store.add_message(conv_id, "assistant", timeout_answer)
             return {
-                "answer": (
-                    "The model took too long to generate a response. "
-                    "Try a more specific question or reduce top_k."
-                ),
+                "answer": timeout_answer,
                 "sources": sources,
                 "processing_time_seconds": round(elapsed, 3),
-                "conversation_id": conversation_id or "",
+                "conversation_id": conv_id,
             }
 
         answer_text = answer.strip() if isinstance(answer, str) else str(answer).strip()
@@ -263,9 +290,16 @@ class RAGService:
         if existing_conv:
             conv_id = conversation_id
         else:
-            conv_id = conversation_store.create(context=context, sources=sources)
+            conv_id = conversation_id or await conversation_store.create(
+                tenant_id=tenant_id, context=context, sources=sources,
+            )
 
-        conversation_store.append_turn(conv_id, question, answer_text)
+        await conversation_store.add_message(conv_id, "assistant", answer_text)
+
+        msg_count = await conversation_store.get_message_count(conv_id)
+        if msg_count <= 2:
+            auto_title = question[:60] + ("..." if len(question) > 60 else "")
+            await conversation_store.update_title(conv_id, auto_title)
 
         elapsed = time.perf_counter() - start
         logger.info("RAG pipeline completed in %.2f seconds", elapsed)

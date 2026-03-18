@@ -16,6 +16,7 @@ from src.core.documents import DocumentManager
 from src.core.elastic import ElasticClient
 from src.core.llm import LLMManager
 from src.core.rate_limiter import RateLimiter, RequestHistory
+from src.core.tasks import TaskManager
 from src.core.tenants import TenantManager
 from src.services.document_processor import DocumentProcessor
 from src.services.rag_chain import RAGService
@@ -45,6 +46,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.document_manager = document_manager
     logger.info("Document metadata table initialised")
 
+    conversation_store = ConversationStore()
+    await conversation_store.init_db()
+    app.state.conversation_store = conversation_store
+    logger.info("Conversation tables initialised")
+
+    app.state.task_manager = TaskManager()
+    logger.info("Task manager initialised")
+
     elastic = ElasticClient()
     await elastic.connect()
     await elastic.create_index()
@@ -57,7 +66,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     rag_service = RAGService(elastic=elastic, llm_manager=llm_manager)
     app.state.rag_service = rag_service
-    app.state.conversation_store = ConversationStore()
 
     app.state.document_processor = DocumentProcessor(
         elastic=elastic,

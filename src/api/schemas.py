@@ -29,8 +29,15 @@ class SourceDocument(BaseModel):
     source_type: str = "arxiv"
 
 
-class AskResponse(BaseModel):
-    """Structured response from the RAG pipeline."""
+class AskSubmittedResponse(BaseModel):
+    """Immediate response when a question is submitted (async task created)."""
+
+    task_id: str
+    conversation_id: str
+
+
+class AskResult(BaseModel):
+    """Final result from the RAG pipeline (returned inside TaskStatusResponse)."""
 
     answer: str
     sources: list[SourceDocument]
@@ -94,6 +101,55 @@ class RequestLogEntry(BaseModel):
     question: str
     status: str
     processing_time: float | None = None
+
+
+# --------------- Task schemas ---------------
+
+class TaskStatusResponse(BaseModel):
+    """Status of an async RAG task."""
+
+    task_id: str
+    status: str  # processing | completed | cancelled | error
+    result: AskResult | None = None
+    error_message: str | None = None
+
+
+# --------------- Conversation schemas ---------------
+
+class MessageItem(BaseModel):
+    """Single message in a conversation."""
+
+    role: str
+    content: str
+    created_at: float
+
+
+class ConversationListItem(BaseModel):
+    """Conversation summary for sidebar listing."""
+
+    id: str
+    title: str
+    last_accessed: float
+    created_at: float
+    message_count: int
+    pending_task_id: str | None = None
+
+
+class ConversationDetail(BaseModel):
+    """Full conversation with messages, used when loading a conversation."""
+
+    conversation_id: str
+    title: str
+    messages: list[MessageItem]
+    sources: list[SourceDocument]
+    pending_task_id: str | None = None
+
+
+class ConversationCreateResponse(BaseModel):
+    """Response after creating a new empty conversation."""
+
+    id: str
+    title: str
 
 
 # --------------- Custom document schemas ---------------

@@ -529,7 +529,7 @@ All settings are loaded from environment variables or a `.env` file. Below is th
 | `INDEXER_BATCH_SIZE`    | `2000`                                                      | Documents per Elasticsearch bulk request          |
 | `ENCODER_BATCH_SIZE`    | `64`                                                        | Sentences per encoding batch                      |
 | `TENANT_DB_PATH`        | `data/tenants.db`                                           | Path to the SQLite tenant database                |
-| `ADMIN_API_KEY`         | `change-me-in-production`                                   | Admin key for tenant management endpoints         |
+| `ADMIN_API_KEY`         | `admin`                                   | Admin key for tenant management endpoints         |
 | `DEFAULT_RATE_LIMIT`    | `30`                                                        | Default requests/minute for new tenants           |
 | `BASE_CHUNK_SIZE`       | `1000`                                                      | Base chunk size (adapted by active tenant count)  |
 | `MIN_CHUNK_SIZE`        | `400`                                                       | Minimum chunk size under high tenant load         |
