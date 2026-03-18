@@ -346,8 +346,16 @@ class RAGService:
                         paper_ids,
                     )
 
+                    title_by_pid = {
+                        r["paper_id"]: r["title"]
+                        for r in search_results
+                    }
                     for pid in paper_ids:
-                        arxiv_chunks.extend(chunks_by_paper.get(pid, []))
+                        title = title_by_pid.get(pid, pid)
+                        for chunk in chunks_by_paper.get(pid, []):
+                            arxiv_chunks.append(
+                                f"[Paper: {title}]\n{chunk}"
+                            )
 
                     if not arxiv_chunks:
                         context_lines = []

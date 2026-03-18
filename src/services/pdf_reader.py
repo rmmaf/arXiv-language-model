@@ -1,7 +1,8 @@
 """Async PDF downloader and text extractor for arXiv papers.
 
 Downloads PDFs entirely in memory (no disk I/O) using httpx,
-extracts text with PyMuPDF, and chunks via LangChain splitter.
+extracts structured Markdown with pymupdf4llm, and produces
+section-aware chunks via LangChain splitters.
 """
 
 import asyncio
@@ -9,7 +10,11 @@ import logging
 
 import fitz  # PyMuPDF
 import httpx
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+import pymupdf4llm
+from langchain_text_splitters import (
+    MarkdownHeaderTextSplitter,
+    RecursiveCharacterTextSplitter,
+)
 
 from src.core.config import settings
 
@@ -17,6 +22,12 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2.0
+
+_HEADERS_TO_SPLIT_ON = [
+    ("#", "h1"),
+    ("##", "h2"),
+    ("###", "h3"),
+]
 
 
 class AsyncPDFReader:
@@ -86,21 +97,53 @@ class AsyncPDFReader:
 
     @staticmethod
     def extract_text(pdf_bytes: bytes) -> str:
-        """Extract all text from in-memory PDF bytes using PyMuPDF."""
+        """Extract structured Markdown from in-memory PDF bytes.
+
+        Uses pymupdf4llm which preserves headings, tables, and
+        handles letter-spacing natively.  Repetitive page
+        headers/footers are stripped automatically.
+        """
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         try:
-            pages: list[str] = []
-            for page in doc:
-                text = page.get_text()
-                if text:
-                    pages.append(text)
-            return "\n".join(pages)
+            return pymupdf4llm.to_markdown(
+                doc,
+                header=False,
+                footer=False,
+                ignore_images=True,
+                force_text=True,
+            )
         finally:
             doc.close()
 
     def chunk_text(self, text: str) -> list[str]:
-        """Split extracted text into overlapping chunks."""
-        return self._splitter.split_text(text)
+        """Split Markdown text into section-aware chunks.
+
+        Stage 1: split on Markdown headings so each section becomes
+        its own document.
+        Stage 2: subdivide long sections using the character-level
+        splitter, propagating the section path as a prefix.
+        """
+        md_splitter = MarkdownHeaderTextSplitter(
+            headers_to_split_on=_HEADERS_TO_SPLIT_ON,
+            strip_headers=False,
+        )
+        md_docs = md_splitter.split_text(text)
+
+        split_docs = self._splitter.split_documents(md_docs)
+
+        chunks: list[str] = []
+        for doc in split_docs:
+            section_parts = [
+                doc.metadata[k]
+                for k in ("h1", "h2", "h3")
+                if k in doc.metadata
+            ]
+            if section_parts:
+                prefix = f"[Section: {' > '.join(section_parts)}]\n"
+                chunks.append(prefix + doc.page_content)
+            else:
+                chunks.append(doc.page_content)
+        return chunks
 
     async def _process_single(self, paper_id: str) -> list[str]:
         """Download, extract, and chunk a single paper."""

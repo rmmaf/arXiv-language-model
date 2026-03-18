@@ -5,7 +5,6 @@ import logging
 import shutil
 from pathlib import Path
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 
 from src.core.config import settings
@@ -35,15 +34,12 @@ class DocumentProcessor:
         filename: str,
         tenant_id: str,
     ) -> DocumentMeta:
-        raw_text = AsyncPDFReader.extract_text(pdf_bytes)
+        reader = AsyncPDFReader()
+        raw_text = reader.extract_text(pdf_bytes)
         if not raw_text.strip():
             raise ValueError(f"Could not extract text from '{filename}'")
 
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=settings.chunk_size,
-            chunk_overlap=settings.chunk_overlap,
-        )
-        chunks = splitter.split_text(raw_text)
+        chunks = reader.chunk_text(raw_text)
         if not chunks:
             raise ValueError(f"No chunks produced from '{filename}'")
 
