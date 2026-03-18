@@ -7,6 +7,7 @@ re-rank -> LLM answer.
 import asyncio
 import logging
 import math
+import re
 import threading
 import time
 from functools import partial
@@ -26,6 +27,12 @@ from src.services.pdf_reader import AsyncPDFReader
 logger = logging.getLogger(__name__)
 
 MAX_HISTORY_TURNS = 4
+
+_CUSTOM_DOC_PATTERN = re.compile(
+    r"(pdf|documento|arquivo|anexo|enviado|uploaded|attached"
+    r"|file|deste|desse|do\s+que\s+enviei|em\s+anexo)",
+    re.IGNORECASE,
+)
 
 RAG_PROMPT = PromptTemplate.from_template(
     "You are a research assistant specialized in academic papers. "
@@ -82,6 +89,12 @@ class RAGService:
             )
         )
 
+    @staticmethod
+    def _detect_custom_intent(question: str) -> bool:
+        """Return True when the question explicitly references an
+        attached / uploaded document."""
+        return bool(_CUSTOM_DOC_PATTERN.search(question))
+
     def _embed(self, texts: list[str]) -> np.ndarray:
         return self._encoder.encode(texts, show_progress_bar=False)
 
@@ -90,18 +103,64 @@ class RAGService:
         query_vector: np.ndarray,
         chunks: list[str],
         top_n: int = 5,
+        chunk_is_custom: list[bool] | None = None,
+        boost_factor: float = 1.0,
+        reserved_custom_slots: int = 0,
     ) -> list[str]:
-        """Re-rank chunks by cosine similarity to the query vector."""
+        """Re-rank *chunks* by cosine similarity to *query_vector*.
+
+        When *chunk_is_custom* is provided the scores of custom chunks
+        are multiplied by *boost_factor*.  If *reserved_custom_slots*
+        is greater than zero, that many top-N positions are guaranteed
+        for the highest-scoring custom chunks (when available).
+        """
         if not chunks:
             return []
 
         chunk_vectors = self._embed(chunks)
 
-        q_norm = query_vector / (np.linalg.norm(query_vector) + 1e-10)
+        q_norm = query_vector / (
+            np.linalg.norm(query_vector) + 1e-10
+        )
         c_norms = chunk_vectors / (
-            np.linalg.norm(chunk_vectors, axis=1, keepdims=True) + 1e-10
+            np.linalg.norm(chunk_vectors, axis=1, keepdims=True)
+            + 1e-10
         )
         similarities = c_norms @ q_norm
+
+        if chunk_is_custom and boost_factor > 1.0:
+            mask = np.array(chunk_is_custom, dtype=np.float64)
+            similarities = similarities * (
+                1.0 + mask * (boost_factor - 1.0)
+            )
+
+        if reserved_custom_slots > 0 and chunk_is_custom:
+            custom_idx = [
+                i for i, c in enumerate(chunk_is_custom) if c
+            ]
+            custom_ranked = sorted(
+                custom_idx,
+                key=lambda i: similarities[i],
+                reverse=True,
+            )
+            reserved = custom_ranked[:reserved_custom_slots]
+            reserved_set = set(reserved)
+
+            remaining = sorted(
+                (
+                    i for i in range(len(chunks))
+                    if i not in reserved_set
+                ),
+                key=lambda i: similarities[i],
+                reverse=True,
+            )
+            fill = remaining[: top_n - len(reserved)]
+
+            final = reserved + fill
+            final.sort(
+                key=lambda i: similarities[i], reverse=True,
+            )
+            return [chunks[i] for i in final]
 
         ranked_indices = np.argsort(similarities)[::-1][:top_n]
         return [chunks[i] for i in ranked_indices]
@@ -264,8 +323,11 @@ class RAGService:
             all_chunks = arxiv_chunks + custom_chunks
 
             if not all_chunks and not search_results:
-                conv_id = conversation_id or await conversation_store.create(
-                    tenant_id=tenant_id
+                conv_id = (
+                    conversation_id
+                    or await conversation_store.create(
+                        tenant_id=tenant_id,
+                    )
                 )
                 no_results_answer = (
                     "No relevant papers or documents "
@@ -277,13 +339,41 @@ class RAGService:
                 return {
                     "answer": no_results_answer,
                     "sources": [],
-                    "processing_time_seconds": time.perf_counter() - start,
+                    "processing_time_seconds": (
+                        time.perf_counter() - start
+                    ),
                     "conversation_id": conv_id,
                 }
 
             if all_chunks:
+                chunk_is_custom = (
+                    [False] * len(arxiv_chunks)
+                    + [True] * len(custom_chunks)
+                )
+                has_custom = bool(
+                    custom_document_ids and custom_chunks
+                )
+                explicit_intent = (
+                    self._detect_custom_intent(question)
+                )
+
+                if has_custom and explicit_intent:
+                    boost = settings.custom_boost_factor
+                    reserved = settings.custom_reserved_slots
+                elif has_custom:
+                    boost = settings.custom_mild_boost_factor
+                    reserved = 0
+                else:
+                    boost = 1.0
+                    reserved = 0
+
                 top_chunks = self._rerank_chunks(
-                    query_vector, all_chunks, top_n=5,
+                    query_vector,
+                    all_chunks,
+                    top_n=5,
+                    chunk_is_custom=chunk_is_custom,
+                    boost_factor=boost,
+                    reserved_custom_slots=reserved,
                 )
                 context = "\n\n---\n\n".join(top_chunks)
             else:

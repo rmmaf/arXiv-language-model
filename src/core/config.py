@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     upload_dir: str = "data/uploads"
     max_upload_size_mb: int = 50
 
+    # Custom document boost (re-rank priority for attached PDFs)
+    custom_boost_factor: float = 1.5
+    custom_mild_boost_factor: float = 1.2
+    custom_reserved_slots: int = 2
+
     # Async task manager
     task_ttl_seconds: int = 3600
     task_poll_interval: float = 2.0
