@@ -6,6 +6,7 @@ retrieve results after completion, and cancel work in progress.
 
 import asyncio
 import logging
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -24,7 +25,12 @@ class TaskState:
     status: str = "processing"  # processing | completed | cancelled | error
     result: dict[str, Any] | None = None
     error_message: str | None = None
-    asyncio_task: asyncio.Task[Any] | None = field(default=None, repr=False)
+    asyncio_task: asyncio.Task[Any] | None = field(
+        default=None, repr=False,
+    )
+    cancel_event: threading.Event = field(
+        default_factory=threading.Event, repr=False,
+    )
     created_at: float = field(default_factory=time.time)
     finished_at: float | None = None
 
@@ -41,13 +47,22 @@ class TaskManager:
         coro: Any,
         tenant_id: str,
         conversation_id: str,
+        cancel_event: threading.Event | None = None,
     ) -> str:
+        """Submit a coroutine as a background task.
+
+        When *cancel_event* is provided it is stored in the
+        ``TaskState`` so that ``cancel()`` can signal it to
+        interrupt GPU inference.
+        """
         self._cleanup_expired()
         task_id = uuid.uuid4().hex[:12]
+        event = cancel_event or threading.Event()
         state = TaskState(
             task_id=task_id,
             conversation_id=conversation_id,
             tenant_id=tenant_id,
+            cancel_event=event,
         )
         loop = asyncio.get_running_loop()
         asyncio_task = loop.create_task(self._run(state, coro))
@@ -80,11 +95,17 @@ class TaskManager:
         return self._tasks.get(task_id)
 
     def cancel(self, task_id: str) -> bool:
+        """Cancel a running task.
+
+        Sets the ``cancel_event`` first so the GPU stopping-criteria
+        can halt token generation, then cancels the asyncio task.
+        """
         state = self._tasks.get(task_id)
         if state is None:
             return False
         if state.status != "processing":
             return False
+        state.cancel_event.set()
         if state.asyncio_task and not state.asyncio_task.done():
             state.asyncio_task.cancel()
         state.status = "cancelled"

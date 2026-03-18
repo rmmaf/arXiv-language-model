@@ -1,4 +1,5 @@
 import logging
+import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -45,8 +46,8 @@ async def ask(
     active_count = await tenant_manager.count_active()
 
     conv_id = body.conversation_id
+    title = body.question[:60] + ("..." if len(body.question) > 60 else "")
     if not conv_id:
-        title = body.question[:60] + ("..." if len(body.question) > 60 else "")
         conv_id = await conversation_store.create(
             tenant_id=tenant.id, title=title,
         )
@@ -60,9 +61,14 @@ async def ask(
             detail="Conversation belongs to another tenant",
         )
 
+    if conv["title"] == "New conversation":
+        await conversation_store.update_title(conv_id, title)
+
     await conversation_store.add_message(
         conv_id, "user", body.question,
     )
+
+    cancel_event = threading.Event()
 
     coro = rag_service.ask(
         question=body.question,
@@ -73,13 +79,20 @@ async def ask(
         conversation_id=conv_id,
         fetch_new_papers=body.fetch_new_papers,
         custom_document_ids=body.custom_document_ids,
+        cancel_event=cancel_event,
     )
 
     task_id = task_manager.submit(
-        coro, tenant_id=tenant.id, conversation_id=conv_id,
+        coro,
+        tenant_id=tenant.id,
+        conversation_id=conv_id,
+        cancel_event=cancel_event,
     )
 
-    history.log(tenant.id, tenant.name, body.question, "submitted")
+    history.log(
+        tenant.id, tenant.name, body.question,
+        "submitted", task_id=task_id,
+    )
 
     return AskSubmittedResponse(task_id=task_id, conversation_id=conv_id)
 
@@ -106,20 +119,30 @@ async def get_task_status(
         )
 
     result = None
+    processing_time: float | None = None
     if state.status == "completed" and state.result:
+        processing_time = state.result.get(
+            "processing_time_seconds", 0,
+        )
         result = AskResult(
             answer=state.result["answer"],
             sources=[
                 SourceDocument(**s)
                 for s in state.result.get("sources", [])
             ],
-            processing_time_seconds=state.result.get(
-                "processing_time_seconds", 0,
-            ),
+            processing_time_seconds=processing_time,
             conversation_id=state.result.get(
                 "conversation_id",
                 state.conversation_id,
             ),
+        )
+
+    if state.status in ("completed", "error"):
+        history: RequestHistory = (
+            request.app.state.request_history
+        )
+        history.update_status(
+            task_id, state.status, processing_time,
         )
 
     return TaskStatusResponse(
@@ -148,6 +171,11 @@ async def cancel_task(
         )
 
     cancelled = task_manager.cancel(task_id)
+
+    if cancelled:
+        history: RequestHistory = request.app.state.request_history
+        history.update_status(task_id, "cancelled")
+
     return {"cancelled": cancelled}
 
 
@@ -270,6 +298,12 @@ async def delete_conversation(
     )
     if active_task:
         task_manager.cancel(active_task.task_id)
+        history: RequestHistory = (
+            request.app.state.request_history
+        )
+        history.update_status(
+            active_task.task_id, "cancelled",
+        )
 
     await conversation_store.delete(conversation_id)
 

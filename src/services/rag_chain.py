@@ -7,7 +7,9 @@ re-rank -> LLM answer.
 import asyncio
 import logging
 import math
+import threading
 import time
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -26,15 +28,23 @@ logger = logging.getLogger(__name__)
 MAX_HISTORY_TURNS = 4
 
 RAG_PROMPT = PromptTemplate.from_template(
-    "You are a research assistant. Use ONLY the context "
-    "below to answer the question.\n"
-    "If the context is insufficient, say so clearly.\n\n"
+    "You are a research assistant specialized in academic papers. "
+    "Answer the question using the context below.\n\n"
+    "Guidelines:\n"
+    "- Synthesize information across multiple context passages when needed.\n"
+    "- For comparison or analytical questions, identify similarities and "
+    "differences between papers/findings even if the context does not "
+    "state them explicitly.\n"
+    "- Ground every claim in the provided context. Cite paper titles or "
+    "authors when available.\n"
+    "- If the context only partially addresses the question, answer what "
+    "you can and clearly state what information is missing.\n"
+    "- Do NOT fabricate facts not supported by the context.\n\n"
     "Context:\n{context}\n\n"
     "Conversation History:\n{chat_history}\n\n"
     "Question: {question}\n\n"
     "Answer:"
 )
-
 
 class RAGService:
     """End-to-end hybrid RAG pipeline over arXiv papers."""
@@ -141,18 +151,24 @@ class RAGService:
         conversation_id: str | None = None,
         fetch_new_papers: bool = True,
         custom_document_ids: list[str] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> dict[str, Any]:
         """Run the RAG pipeline scoped to *tenant_id*.
 
-        When *conversation_id* is provided and *fetch_new_papers* is False the
-        expensive search + PDF download steps are skipped and the stored
-        context is reused for a follow-up question.
+        When *conversation_id* is provided and *fetch_new_papers* is
+        False the expensive search + PDF download steps are skipped and
+        the stored context is reused for a follow-up question.
 
-        When *custom_document_ids* is provided, chunks from those uploaded
-        documents are merged with arXiv results before re-ranking.
+        When *custom_document_ids* is provided, chunks from those
+        uploaded documents are merged with arXiv results before
+        re-ranking.
 
-        Supports asyncio cancellation -- CancelledError is caught at key
-        checkpoints so partial state can be persisted.
+        When *cancel_event* is provided, it is forwarded to the LLM
+        ``generate()`` call so that GPU inference can be interrupted
+        at the token level.
+
+        Supports asyncio cancellation -- CancelledError is caught at
+        key checkpoints so partial state can be persisted.
         """
         start = time.perf_counter()
         k = top_k or settings.top_k_results
@@ -282,13 +298,24 @@ class RAGService:
 
         await asyncio.sleep(0)  # cancellation checkpoint before LLM
 
+        event = cancel_event or threading.Event()
+        loop = asyncio.get_running_loop()
+
         try:
             answer = await asyncio.wait_for(
-                self._llm.pipeline.ainvoke(prompt_text),
+                loop.run_in_executor(
+                    None,
+                    partial(
+                        self._llm.generate, prompt_text, event,
+                    ),
+                ),
                 timeout=settings.llm_timeout,
             )
         except asyncio.CancelledError:
-            logger.info("RAG pipeline cancelled during LLM inference")
+            event.set()
+            logger.info(
+                "RAG pipeline cancelled during LLM inference",
+            )
             if conversation_id:
                 await conversation_store.add_message(
                     conversation_id, "assistant",
@@ -296,14 +323,22 @@ class RAGService:
                 )
             raise
         except asyncio.TimeoutError:
+            event.set()
             elapsed = time.perf_counter() - start
-            logger.error("LLM inference timed out after %.1fs", elapsed)
+            logger.error(
+                "LLM inference timed out after %.1fs", elapsed,
+            )
             timeout_answer = (
                 "The model took too long to generate a response. "
                 "Try a more specific question or reduce top_k."
             )
-            conv_id = conversation_id or await conversation_store.create(
-                tenant_id=tenant_id, context=context, sources=sources,
+            conv_id = (
+                conversation_id
+                or await conversation_store.create(
+                    tenant_id=tenant_id,
+                    context=context,
+                    sources=sources,
+                )
             )
             await conversation_store.add_message(
                 conv_id, "assistant", timeout_answer,
@@ -314,6 +349,17 @@ class RAGService:
                 "processing_time_seconds": round(elapsed, 3),
                 "conversation_id": conv_id,
             }
+
+        if event.is_set():
+            logger.info(
+                "LLM generation was interrupted by cancel event",
+            )
+            if conversation_id:
+                await conversation_store.add_message(
+                    conversation_id, "assistant",
+                    "(Response cancelled by user)",
+                )
+            raise asyncio.CancelledError
 
         answer_text = (
             answer.strip() if isinstance(answer, str)

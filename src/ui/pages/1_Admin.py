@@ -143,7 +143,13 @@ with tabs[0]:
                 })
                 df = df.drop(columns=["tenant_id"], errors="ignore")
 
-                status_colors = {"success": "🟢", "error": "🔴", "timeout": "🟡"}
+                status_colors = {
+                    "completed": "🟢",
+                    "error": "🔴",
+                    "cancelled": "🔴",
+                    "submitted": "🟡",
+                    "processing": "🔵",
+                }
                 df["Status"] = df["Status"].map(
                     lambda s: f"{status_colors.get(s, '⚪')} {s}"
                 )

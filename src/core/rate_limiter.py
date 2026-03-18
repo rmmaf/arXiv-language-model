@@ -21,6 +21,7 @@ class RequestRecord:
     question: str
     status: str
     processing_time: float | None = None
+    task_id: str | None = None
 
 
 class RequestHistory:
@@ -36,10 +37,14 @@ class RequestHistory:
         question: str,
         status: str,
         processing_time: float | None = None,
+        task_id: str | None = None,
     ) -> None:
+        """Append a new request record to the history."""
         self._records.appendleft(
             RequestRecord(
-                timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                timestamp=time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime(),
+                ),
                 tenant_id=tenant_id,
                 tenant_name=tenant_name,
                 question=(
@@ -48,10 +53,30 @@ class RequestHistory:
                 ),
                 status=status,
                 processing_time=processing_time,
+                task_id=task_id,
             )
         )
 
+    def update_status(
+        self,
+        task_id: str,
+        new_status: str,
+        processing_time: float | None = None,
+    ) -> bool:
+        """Update the status of an existing record by *task_id*.
+
+        Returns ``True`` if a matching record was found and updated.
+        """
+        for record in self._records:
+            if record.task_id == task_id:
+                record.status = new_status
+                if processing_time is not None:
+                    record.processing_time = processing_time
+                return True
+        return False
+
     def recent(self, limit: int = 50) -> list[RequestRecord]:
+        """Return the most recent records (up to *limit*)."""
         return list(self._records)[:limit]
 
 
