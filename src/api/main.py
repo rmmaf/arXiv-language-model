@@ -1,20 +1,24 @@
 """FastAPI application entry-point with lifespan management."""
 
 import logging
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.admin_routes import admin_router
+from src.api.document_routes import document_router
 from src.api.routes import router
 from src.core.config import settings
 from src.core.conversation import ConversationStore
+from src.core.documents import DocumentManager
 from src.core.elastic import ElasticClient
 from src.core.llm import LLMManager
 from src.core.rate_limiter import RateLimiter, RequestHistory
+from src.core.tasks import TaskManager
 from src.core.tenants import TenantManager
+from src.services.document_processor import DocumentProcessor
 from src.services.rag_chain import RAGService
 
 logging.basicConfig(
@@ -26,7 +30,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Startup: connect to ES, load LLM, init tenants, build RAG service.  Shutdown: release."""
+    """Startup: connect to ES, load LLM, init tenants.
+
+    Shutdown: release resources.
+    """
     logger.info("Starting up ...")
 
     tenant_manager = TenantManager()
@@ -37,17 +44,37 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.rate_limiter = RateLimiter()
     app.state.request_history = RequestHistory()
 
+    document_manager = DocumentManager()
+    await document_manager.init_db()
+    app.state.document_manager = document_manager
+    logger.info("Document metadata table initialised")
+
+    conversation_store = ConversationStore()
+    await conversation_store.init_db()
+    app.state.conversation_store = conversation_store
+    logger.info("Conversation tables initialised")
+
+    app.state.task_manager = TaskManager()
+    logger.info("Task manager initialised")
+
     elastic = ElasticClient()
     await elastic.connect()
     await elastic.create_index()
+    await elastic.create_custom_documents_index()
     app.state.elastic = elastic
 
     llm_manager = LLMManager()
     llm_manager.load()
     app.state.llm_manager = llm_manager
 
-    app.state.rag_service = RAGService(elastic=elastic, llm_manager=llm_manager)
-    app.state.conversation_store = ConversationStore()
+    rag_service = RAGService(elastic=elastic, llm_manager=llm_manager)
+    app.state.rag_service = rag_service
+
+    app.state.document_processor = DocumentProcessor(
+        elastic=elastic,
+        document_manager=document_manager,
+        encoder=rag_service._encoder,
+    )
 
     logger.info("Application ready")
     yield
@@ -59,7 +86,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="ArXiv Hybrid RAG API",
     version="1.0.0",
-    description="Multi-tenant hybrid semantic + lexical search over arXiv papers with local LLM.",
+    description=(
+        "Multi-tenant hybrid semantic + lexical search "
+        "over arXiv papers with local LLM."
+    ),
     lifespan=lifespan,
 )
 
@@ -73,3 +103,4 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(admin_router)
+app.include_router(document_router)

@@ -15,7 +15,9 @@ class Settings(BaseSettings):
     index_name: str = "arxiv_papers"
 
     data_path: str = "data/arxiv-metadata-oai-snapshot.json"
-    model_archive_path: str = "models/phi-3-pytorch-phi-3.5-mini-instruct-v2.tar.gz"
+    model_archive_path: str = (
+        "models/phi-3-pytorch-phi-3.5-mini-instruct-v2.tar.gz"
+    )
     model_extracted_path: str = "models/phi-3.5-mini-instruct"
 
     embedding_model_name: str = "all-MiniLM-L6-v2"
@@ -32,8 +34,8 @@ class Settings(BaseSettings):
     pdf_download_timeout: float = 30.0
     pdf_base_url: str = "https://arxiv.org/pdf"
 
-    llm_timeout: float = 300.0
-    api_request_timeout: float = 600.0
+    llm_timeout: float = 900.0
+    api_request_timeout: float = 1200.0
 
     indexer_batch_size: int = 2000
     encoder_batch_size: int = 64
@@ -41,10 +43,25 @@ class Settings(BaseSettings):
 
     # Multi-tenancy
     tenant_db_path: str = "data/tenants.db"
-    admin_api_key: str = "change-me-in-production"
+    admin_api_key: str = "admin"
     default_rate_limit: int = 30
     base_chunk_size: int = 1000
     min_chunk_size: int = 400
+
+    # Custom document uploads
+    custom_documents_index: str = "custom_documents"
+    upload_dir: str = "data/uploads"
+    max_upload_size_mb: int = 50
+
+    # Custom document boost (re-rank priority for attached PDFs)
+    custom_boost_factor: float = 1.5
+    custom_mild_boost_factor: float = 1.2
+    custom_reserved_slots: int = 2
+    custom_content_weight: float = 0.7
+
+    # Async task manager
+    task_ttl_seconds: int = 3600
+    task_poll_interval: float = 2.0
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

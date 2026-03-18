@@ -14,7 +14,10 @@ async def get_current_tenant(
     tenant_manager: TenantManager = request.app.state.tenant_manager
     tenant = await tenant_manager.get_by_api_key(x_api_key)
     if not tenant or not tenant.is_active:
-        raise HTTPException(status_code=401, detail="Invalid or inactive API key")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or inactive API key",
+        )
     return tenant
 
 

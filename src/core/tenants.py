@@ -77,7 +77,9 @@ class TenantManager:
         )
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
-                "INSERT INTO tenants (id, name, api_key, rate_limit, is_active, created_at) "
+                "INSERT INTO tenants "
+                "(id, name, api_key, rate_limit,"
+                " is_active, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     tenant.id,

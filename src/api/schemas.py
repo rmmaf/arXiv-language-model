@@ -8,24 +8,43 @@ class AskRequest(BaseModel):
     top_k: int = Field(default=3, ge=1, le=10)
     conversation_id: str | None = Field(
         default=None,
-        description="Existing conversation ID to continue. Omit to start a new conversation.",
+        description=(
+            "Existing conversation ID to continue. "
+            "Omit to start a new conversation."
+        ),
     )
     fetch_new_papers: bool = Field(
         default=True,
-        description="When False, reuses the context from the existing conversation instead of searching for new papers.",
+        description=(
+            "When False, reuses the context from the "
+            "existing conversation instead of "
+            "searching for new papers."
+        ),
+    )
+    custom_document_ids: list[str] | None = Field(
+        default=None,
+        description="IDs of custom uploaded documents to include as context.",
     )
 
 
 class SourceDocument(BaseModel):
-    """Reference to an arXiv paper returned as a source."""
+    """Reference to a source document (arXiv paper or custom upload)."""
 
     paper_id: str
     title: str
     score: float
+    source_type: str = "arxiv"
 
 
-class AskResponse(BaseModel):
-    """Structured response from the RAG pipeline."""
+class AskSubmittedResponse(BaseModel):
+    """Immediate response when a question is submitted (async task created)."""
+
+    task_id: str
+    conversation_id: str
+
+
+class AskResult(BaseModel):
+    """Final result from the RAG pipeline."""
 
     answer: str
     sources: list[SourceDocument]
@@ -89,3 +108,72 @@ class RequestLogEntry(BaseModel):
     question: str
     status: str
     processing_time: float | None = None
+
+
+# --------------- Task schemas ---------------
+
+class TaskStatusResponse(BaseModel):
+    """Status of an async RAG task."""
+
+    task_id: str
+    status: str  # processing | completed | cancelled | error
+    result: AskResult | None = None
+    error_message: str | None = None
+
+
+# --------------- Conversation schemas ---------------
+
+class MessageItem(BaseModel):
+    """Single message in a conversation."""
+
+    role: str
+    content: str
+    created_at: float
+
+
+class ConversationListItem(BaseModel):
+    """Conversation summary for sidebar listing."""
+
+    id: str
+    title: str
+    last_accessed: float
+    created_at: float
+    message_count: int
+    pending_task_id: str | None = None
+
+
+class ConversationDetail(BaseModel):
+    """Full conversation with messages, used when loading a conversation."""
+
+    conversation_id: str
+    title: str
+    messages: list[MessageItem]
+    sources: list[SourceDocument]
+    pending_task_id: str | None = None
+
+
+class ConversationCreateResponse(BaseModel):
+    """Response after creating a new empty conversation."""
+
+    id: str
+    title: str
+
+
+# --------------- Custom document schemas ---------------
+
+class DocumentUploadResponse(BaseModel):
+    """Response after a successful custom PDF upload."""
+
+    id: str
+    filename: str
+    total_chunks: int
+    uploaded_at: str
+
+
+class DocumentListItem(BaseModel):
+    """Summary of a custom uploaded document."""
+
+    id: str
+    filename: str
+    total_chunks: int
+    uploaded_at: str
