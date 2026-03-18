@@ -1,6 +1,6 @@
 # arXiv Research Assistant — Multi-Tenant Hybrid RAG Pipeline
 
-A multi-tenant Retrieval-Augmented Generation (RAG) application that answers research questions by searching over **arXiv** papers using a hybrid semantic + lexical search strategy, then generating answers with a locally hosted **Phi-3.5 Mini Instruct** LLM. Supports conversational follow-ups, per-tenant rate limiting, and an admin dashboard for tenant management and monitoring.
+A multi-tenant Retrieval-Augmented Generation (RAG) application that answers research questions by searching over **arXiv** papers and **custom uploaded PDFs** using a hybrid semantic + lexical search strategy, then generating answers with a locally hosted **Phi-3.5 Mini Instruct** LLM. Supports persistent multi-conversation sessions, asynchronous task processing, custom document uploads with intelligent boosting, per-tenant rate limiting, and an admin dashboard for tenant management and monitoring.
 
 ## Table of Contents
 
@@ -25,72 +25,83 @@ When a user asks a question, the system:
 
 1. **Authenticates** the request via an `X-API-Key` header tied to a registered tenant.
 2. **Checks rate limits** using a per-tenant sliding-window limiter (requests/minute).
-3. **Embeds** the question using the `all-MiniLM-L6-v2` sentence-transformer model.
-4. **Searches** Elasticsearch with a hybrid query that combines BM25 (lexical) and kNN (semantic) scoring, scoped to the tenant's documents.
-5. **Downloads** the full PDFs of the top-matching papers from arXiv.
-6. **Extracts and chunks** text from the PDFs using PyMuPDF and LangChain text splitters, with an adaptive chunk size that decreases as more tenants are active.
-7. **Re-ranks** the chunks by cosine similarity to the original question.
-8. **Generates** an answer by feeding the top chunks plus conversation history as context into the Phi-3.5 Mini Instruct LLM (running locally in 4-bit quantization).
-9. **Stores the conversation** in memory so follow-up questions can reuse the same context without re-fetching PDFs.
+3. **Creates an async task** — the question is submitted as a background task, returning a `task_id` for polling.
+4. **Embeds** the question using the `all-MiniLM-L6-v2` sentence-transformer model.
+5. **Searches** Elasticsearch with a hybrid query that combines BM25 (lexical) and kNN (semantic) scoring, scoped to the tenant's arXiv documents. If custom documents are attached, searches the `custom_documents` index as well.
+6. **Downloads** the full PDFs of the top-matching papers from arXiv.
+7. **Extracts and chunks** text from the PDFs using PyMuPDF/pymupdf4llm and LangChain text splitters, with an adaptive chunk size that decreases as more tenants are active.
+8. **Re-ranks** the chunks by cosine similarity to the original question, with configurable boosting for custom document chunks (reserved slots + score multiplier).
+9. **Generates** an answer by feeding the top chunks plus conversation history as context into the Phi-3.5 Mini Instruct LLM (running locally in 4-bit quantization).
+10. **Stores the conversation** persistently in SQLite so follow-up questions can reuse the same context without re-fetching PDFs.
 
 If PDF extraction fails, the system gracefully falls back to using paper abstracts as context.
 
 ## Architecture
 
 ```
-┌──────────────┐        ┌────────────────────┐        ┌────────────────────┐
-│  Streamlit   │──HTTP──▶   FastAPI API       │──async─▶  Elasticsearch    │
-│  Frontend    │        │  (Multi-Tenant RAG) │        │  (Hybrid Index)    │
-│  + Admin UI  │        └──────┬──────────────┘        └────────────────────┘
-└──────────────┘               │
-                  ┌────────────┼────────────────────┐
-                  ▼            ▼                    ▼
-          ┌────────────┐ ┌──────────┐  ┌──────────────────┐
-          │  Sentence   │ │  arXiv   │  │  Phi-3.5 Mini    │
-          │ Transformer │ │ PDF DL   │  │ (4-bit, local)   │
-          │  Encoder    │ │ + PyMuPDF│  │ via HuggingFace  │
-          └────────────┘ └──────────┘  └──────────────────┘
+┌──────────────┐        ┌────────────────────┐        ┌────────────────────────┐
+│  Streamlit   │──HTTP──▶   FastAPI API       │──async─▶  Elasticsearch         │
+│  Frontend    │        │  (Multi-Tenant RAG) │        │  arxiv_papers index    │
+│  + Admin UI  │        └──────┬──────────────┘        │  custom_documents index │
+└──────────────┘               │                       └────────────────────────┘
+                  ┌────────────┼──────────────────────┐
+                  ▼            ▼                      ▼
+          ┌────────────┐ ┌───────────┐  ┌──────────────────┐
+          │  Sentence   │ │  arXiv    │  │  Phi-3.5 Mini    │
+          │ Transformer │ │  PDF DL   │  │ (4-bit, local)   │
+          │  Encoder    │ │+ pymupdf4l│  │ via HuggingFace  │
+          └────────────┘ └───────────┘  └──────────────────┘
                   │
-     ┌────────────┼────────────────────┐
-     ▼            ▼                    ▼
-┌──────────┐ ┌──────────────┐ ┌────────────────┐
-│ SQLite   │ │ Rate Limiter │ │ Conversation   │
-│ (Tenants)│ │ (in-memory)  │ │ Store (TTL)    │
-└──────────┘ └──────────────┘ └────────────────┘
+     ┌────────────┼────────────────────────────┐
+     ▼            ▼                ▼           ▼
+┌──────────┐ ┌──────────────┐ ┌──────────┐ ┌──────────────┐
+│ SQLite   │ │ Rate Limiter │ │ Task     │ │  Document    │
+│ Tenants  │ │ (in-memory)  │ │ Manager  │ │  Processor   │
+│ Convos   │ └──────────────┘ │ (async)  │ │ (uploads)    │
+│ Doc Meta │                  └──────────┘ └──────────────┘
+└──────────┘
 ```
 
 ## Project Structure
 
 ```
 arXiv-language-model/
-├── data/                              # arXiv metadata JSONL dataset (user-provided)
+├── data/                              # arXiv metadata JSONL, SQLite DBs, uploads
+│   └── uploads/                       # Custom PDF uploads (per-tenant subdirectories)
 ├── models/                            # Phi-3.5 Mini Instruct model files (user-provided)
 ├── src/
 │   ├── api/
 │   │   ├── main.py                    # FastAPI app entry-point with lifespan management
-│   │   ├── routes.py                  # Tenant-authenticated endpoints (/ask, /health)
+│   │   ├── routes.py                  # Tenant endpoints (/ask, /tasks, /conversations, /health)
 │   │   ├── admin_routes.py            # Admin endpoints for tenant CRUD and monitoring
-│   │   └── schemas.py                 # Pydantic request/response models (incl. admin)
+│   │   ├── document_routes.py         # Custom document upload and management endpoints
+│   │   └── schemas.py                 # Pydantic request/response models
 │   ├── core/
 │   │   ├── auth.py                    # FastAPI dependencies: tenant auth + admin auth
 │   │   ├── config.py                  # Centralized settings (env vars / .env)
-│   │   ├── conversation.py            # In-memory conversation store with TTL expiration
+│   │   ├── conversation.py            # Persistent conversation store (SQLite)
+│   │   ├── documents.py               # Custom document metadata manager (SQLite)
 │   │   ├── elastic.py                 # Async Elasticsearch client with tenant-scoped hybrid search
 │   │   ├── llm.py                     # LLM manager: extraction, 4-bit loading, pipeline
 │   │   ├── rate_limiter.py            # Sliding-window rate limiter + request history log
+│   │   ├── tasks.py                   # Async background task manager
 │   │   └── tenants.py                 # Tenant registry backed by SQLite (via aiosqlite)
 │   ├── services/
+│   │   ├── document_processor.py      # Custom PDF processing, chunking, and indexing
 │   │   ├── indexer.py                 # CLI script to index arXiv metadata per tenant
 │   │   ├── pdf_reader.py             # Async PDF downloader + text extractor + chunker
 │   │   └── rag_chain.py              # RAG orchestration: search → PDF → re-rank → LLM
 │   └── ui/
-│       ├── app.py                     # Streamlit chat frontend (tenant-authenticated)
+│       ├── app.py                     # Streamlit chat frontend (multi-conversation)
 │       └── pages/
 │           └── 1_Admin.py             # Admin dashboard: monitoring, tenant CRUD, per-tenant RAG
+├── tests/
+│   └── test_custom_boost.py           # Tests for custom document boost logic
 ├── docker-compose.yml                 # Multi-service orchestration (ES + API + UI)
 ├── Dockerfile                         # CUDA-enabled container for the API
 ├── Dockerfile.ui                      # Lightweight container for the Streamlit frontend
 ├── requirements.txt                   # Python dependencies
+├── LICENSE                            # MIT License
 └── README.md
 ```
 
@@ -292,14 +303,15 @@ The Elasticsearch index uses a hybrid mapping with:
 Open your browser at **http://localhost:8501**. Enter your tenant API key in the sidebar, type a research question, and press Enter.
 
 The chat interface supports:
-- **Multi-turn conversations** — follow-up questions reuse the same paper context by default
+- **Persistent multi-conversation sessions** — create, switch between, and delete conversations from the sidebar; state is stored in SQLite and survives page reloads
+- **Background task processing** — questions are processed asynchronously with live polling and a stop button to cancel in-flight tasks
+- **Custom document uploads** — upload your own PDFs to use as additional RAG context alongside arXiv papers
 - **Search new papers** — a sidebar checkbox forces a new arXiv search + PDF download for the next question
 - **top_k control** — adjust how many papers to retrieve (1–10)
-- **Restart conversation** — clears chat history and context
 
 The UI displays:
 - The generated answer from the LLM
-- Expandable source papers with links to their arXiv pages and relevance scores
+- Expandable source papers with links to their arXiv pages, relevance scores, and source type (`arxiv` or `custom_upload`)
 - Processing time per response
 
 ### Admin Dashboard
@@ -314,13 +326,20 @@ To pre-fill the admin key field automatically, set the `ADMIN_API_KEY` environme
 
 ### cURL Examples
 
-Ask a question (requires a tenant API key):
+Submit a question (returns a task ID for async polling):
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/ask \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <tenant-api-key>" \
   -d '{"question": "What are the latest advances in vision transformers?", "top_k": 3}'
+```
+
+Poll the task status until completion:
+
+```bash
+curl http://localhost:8000/api/v1/tasks/<task-id> \
+  -H "X-API-Key: <tenant-api-key>"
 ```
 
 Follow-up question reusing existing context:
@@ -332,17 +351,36 @@ curl -X POST http://localhost:8000/api/v1/ask \
   -d '{"question": "How do they compare to CNNs?", "conversation_id": "<id-from-previous-response>", "fetch_new_papers": false}'
 ```
 
+Upload a custom PDF document:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/documents/ \
+  -H "X-API-Key: <tenant-api-key>" \
+  -F "file=@my-paper.pdf"
+```
+
+Ask a question using custom documents as context:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/ask \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <tenant-api-key>" \
+  -d '{"question": "Summarize the key findings", "custom_document_ids": ["<document-id>"]}'
+```
+
 ## API Reference
 
 ### Authentication
 
-All `/api/v1/ask` requests require an `X-API-Key` header with a valid tenant API key. All `/api/v1/admin/*` requests require an `X-Admin-Key` header with the configured admin key.
+All tenant endpoints (`/api/v1/ask`, `/api/v1/tasks/*`, `/api/v1/conversations/*`, `/api/v1/documents/*`) require an `X-API-Key` header with a valid tenant API key. All `/api/v1/admin/*` requests require an `X-Admin-Key` header with the configured admin key.
 
 ---
 
-### `POST /api/v1/ask`
+### Tenant Endpoints
 
-Ask a research question using the hybrid RAG pipeline.
+#### `POST /api/v1/ask`
+
+Submit a research question to the RAG pipeline as a background task.
 
 **Headers:**
 
@@ -352,43 +390,173 @@ Ask a research question using the hybrid RAG pipeline.
 
 **Request Body:**
 
-| Field              | Type    | Required | Default | Description                                                           |
-|--------------------|---------|----------|---------|-----------------------------------------------------------------------|
-| `question`         | string  | Yes      | —       | Research question (10–1000 chars)                                     |
-| `top_k`            | int     | No       | 3       | Number of papers to retrieve (1–10)                                   |
-| `conversation_id`  | string  | No       | null    | Existing conversation ID to continue; omit to start a new conversation |
-| `fetch_new_papers` | boolean | No       | true    | When `false`, reuses stored context instead of searching for new papers |
+| Field                | Type     | Required | Default | Description                                                            |
+|----------------------|----------|----------|---------|------------------------------------------------------------------------|
+| `question`           | string   | Yes      | —       | Research question (10–1000 chars)                                      |
+| `top_k`              | int      | No       | 3       | Number of papers to retrieve (1–10)                                    |
+| `conversation_id`    | string   | No       | null    | Existing conversation ID to continue; omit to start a new conversation |
+| `fetch_new_papers`   | boolean  | No       | true    | When `false`, reuses stored context instead of searching for new papers |
+| `custom_document_ids`| string[] | No       | null    | IDs of custom uploaded documents to include as context                 |
 
 **Response:**
 
 ```json
 {
-  "answer": "Vision transformers have seen significant advances in ...",
-  "sources": [
-    {
-      "paper_id": "2103.14030",
-      "title": "Swin Transformer: Hierarchical Vision Transformer ...",
-      "score": 15.432
-    }
-  ],
-  "processing_time_seconds": 12.345,
+  "task_id": "abc123",
   "conversation_id": "a1b2c3d4e5f6"
 }
 ```
 
+The question is processed asynchronously. Use the `task_id` to poll for results via `GET /api/v1/tasks/{task_id}`.
+
 **Error Responses:**
 
-| Status | Description                  |
-|--------|------------------------------|
-| 401    | Invalid or inactive API key  |
-| 429    | Tenant rate limit exceeded   |
-| 504    | Request timed out            |
+| Status | Description                             |
+|--------|-----------------------------------------|
+| 401    | Invalid or inactive API key             |
+| 403    | Conversation belongs to another tenant  |
+| 404    | Conversation not found                  |
+| 429    | Tenant rate limit exceeded              |
 
 ---
 
-### `GET /api/v1/health`
+#### `GET /api/v1/tasks/{task_id}`
 
-Check the health status of the service.
+Poll the status of a background RAG task.
+
+**Response:**
+
+```json
+{
+  "task_id": "abc123",
+  "status": "completed",
+  "result": {
+    "answer": "Vision transformers have seen significant advances in ...",
+    "sources": [
+      {
+        "paper_id": "2103.14030",
+        "title": "Swin Transformer: Hierarchical Vision Transformer ...",
+        "score": 15.432,
+        "source_type": "arxiv"
+      }
+    ],
+    "processing_time_seconds": 12.345,
+    "conversation_id": "a1b2c3d4e5f6"
+  },
+  "error_message": null
+}
+```
+
+`status` is one of: `processing`, `completed`, `cancelled`, `error`. The `result` field is only present when `status` is `completed`. The `source_type` field is `"arxiv"` for arXiv papers or `"custom_upload"` for uploaded documents.
+
+---
+
+#### `POST /api/v1/tasks/{task_id}/cancel`
+
+Cancel a running background task. Returns `{"cancelled": true}` on success.
+
+---
+
+#### `GET /api/v1/conversations`
+
+List all conversations for the authenticated tenant.
+
+**Response:**
+
+```json
+[
+  {
+    "id": "conv-uuid",
+    "title": "What are vision transformers?...",
+    "last_accessed": 1700000000.0,
+    "created_at": 1700000000.0,
+    "message_count": 4,
+    "pending_task_id": null
+  }
+]
+```
+
+---
+
+#### `GET /api/v1/conversations/{conversation_id}`
+
+Load a conversation with all messages and sources.
+
+**Response:**
+
+```json
+{
+  "conversation_id": "conv-uuid",
+  "title": "What are vision transformers?...",
+  "messages": [
+    {"role": "user", "content": "What are vision transformers?", "created_at": 1700000000.0},
+    {"role": "assistant", "content": "Vision transformers are ...", "created_at": 1700000001.0}
+  ],
+  "sources": [{"paper_id": "2103.14030", "title": "Swin Transformer...", "score": 15.432, "source_type": "arxiv"}],
+  "pending_task_id": null
+}
+```
+
+---
+
+#### `POST /api/v1/conversations`
+
+Create a new empty conversation. Returns `201`.
+
+**Response:**
+
+```json
+{"id": "conv-uuid", "title": "New conversation"}
+```
+
+---
+
+#### `DELETE /api/v1/conversations/{conversation_id}`
+
+Delete a conversation and all its messages. Cancels any active task. Returns `204`.
+
+---
+
+#### `POST /api/v1/documents/`
+
+Upload a custom PDF to use as RAG context. Accepts `multipart/form-data` with a `file` field (PDF only, max 50 MB by default).
+
+**Response (201):**
+
+```json
+{
+  "id": "doc-uuid",
+  "filename": "my-paper.pdf",
+  "total_chunks": 42,
+  "uploaded_at": "2025-01-01T00:00:00Z"
+}
+```
+
+| Status | Description                    |
+|--------|--------------------------------|
+| 400    | Not a PDF or empty file        |
+| 413    | File exceeds size limit        |
+| 422    | Could not process the PDF      |
+
+---
+
+#### `GET /api/v1/documents/`
+
+List all custom documents uploaded by the current tenant.
+
+**Response:** Array of `{id, filename, total_chunks, uploaded_at}` objects.
+
+---
+
+#### `DELETE /api/v1/documents/{document_id}`
+
+Delete a custom document (ES chunks + file + metadata). Returns `204` on success, `404` if not found.
+
+---
+
+#### `GET /api/v1/health`
+
+Check the health status of the service (no authentication required).
 
 **Response:**
 
@@ -404,7 +572,9 @@ Check the health status of the service.
 
 ---
 
-### `POST /api/v1/admin/tenants`
+### Admin Endpoints
+
+#### `POST /api/v1/admin/tenants`
 
 Create a new tenant.
 
@@ -436,7 +606,7 @@ Create a new tenant.
 
 ---
 
-### `GET /api/v1/admin/tenants`
+#### `GET /api/v1/admin/tenants`
 
 List all tenants.
 
@@ -446,15 +616,15 @@ List all tenants.
 
 ---
 
-### `DELETE /api/v1/admin/tenants/{tenant_id}`
+#### `DELETE /api/v1/admin/tenants/{tenant_id}`
 
-Deactivate a tenant. Returns `204` on success, `404` if not found.
+Deactivate a tenant and clean up all its custom documents. Returns `204` on success, `404` if not found.
 
 **Headers:** `X-Admin-Key` (required)
 
 ---
 
-### `GET /api/v1/admin/metrics`
+#### `GET /api/v1/admin/metrics`
 
 Server monitoring metrics.
 
@@ -476,7 +646,7 @@ Server monitoring metrics.
 
 ---
 
-### `GET /api/v1/admin/request-history`
+#### `GET /api/v1/admin/request-history`
 
 Recent request history log.
 
@@ -497,7 +667,7 @@ Recent request history log.
     "tenant_id": "uuid",
     "tenant_name": "My Lab",
     "question": "What are vision transformers?",
-    "status": "success",
+    "status": "completed",
     "processing_time": 12.345
   }
 ]
@@ -507,10 +677,12 @@ Recent request history log.
 
 All settings are loaded from environment variables or a `.env` file. Below is the full list with defaults:
 
+**Core Settings**
+
 | Variable                | Default                                                     | Description                                       |
 |-------------------------|-------------------------------------------------------------|---------------------------------------------------|
 | `ELASTICSEARCH_URL`     | `http://elasticsearch:9200`                                 | Elasticsearch connection URL                      |
-| `INDEX_NAME`            | `arxiv_papers`                                              | Elasticsearch index name                          |
+| `INDEX_NAME`            | `arxiv_papers`                                              | Elasticsearch index for arXiv papers              |
 | `DATA_PATH`             | `data/arxiv-metadata-oai-snapshot.json`                     | Path to the arXiv JSONL metadata file             |
 | `MODEL_ARCHIVE_PATH`    | `models/phi-3-pytorch-phi-3.5-mini-instruct-v2.tar.gz`     | Path to the model `.tar.gz` archive               |
 | `MODEL_EXTRACTED_PATH`  | `models/phi-3.5-mini-instruct`                              | Path where the model is extracted to              |
@@ -519,8 +691,8 @@ All settings are loaded from environment variables or a `.env` file. Below is th
 | `EMBEDDING_DIM`         | `384`                                                       | Embedding vector dimensionality                   |
 | `LLM_MAX_NEW_TOKENS`    | `512`                                                       | Max tokens the LLM can generate per answer        |
 | `LLM_TEMPERATURE`       | `0.3`                                                       | Sampling temperature for LLM generation           |
-| `LLM_TIMEOUT`           | `300.0`                                                     | Timeout (seconds) for LLM inference               |
-| `API_REQUEST_TIMEOUT`   | `600.0`                                                     | Timeout (seconds) for the full API request        |
+| `LLM_TIMEOUT`           | `900.0`                                                     | Timeout (seconds) for LLM inference               |
+| `API_REQUEST_TIMEOUT`   | `1200.0`                                                    | Timeout (seconds) for the full API request        |
 | `CHUNK_SIZE`            | `1000`                                                      | Character size of text chunks from PDFs           |
 | `CHUNK_OVERLAP`         | `200`                                                       | Overlap between consecutive chunks                |
 | `TOP_K_RESULTS`         | `3`                                                         | Default number of search results                  |
@@ -528,19 +700,44 @@ All settings are loaded from environment variables or a `.env` file. Below is th
 | `PDF_BASE_URL`          | `https://arxiv.org/pdf`                                     | Base URL for arXiv PDF downloads                  |
 | `INDEXER_BATCH_SIZE`    | `2000`                                                      | Documents per Elasticsearch bulk request          |
 | `ENCODER_BATCH_SIZE`    | `64`                                                        | Sentences per encoding batch                      |
-| `TENANT_DB_PATH`        | `data/tenants.db`                                           | Path to the SQLite tenant database                |
-| `ADMIN_API_KEY`         | `admin`                                   | Admin key for tenant management endpoints         |
+| `LOG_LEVEL`             | `INFO`                                                      | Logging verbosity                                 |
+
+**Multi-Tenancy**
+
+| Variable                | Default                                                     | Description                                       |
+|-------------------------|-------------------------------------------------------------|---------------------------------------------------|
+| `TENANT_DB_PATH`        | `data/tenants.db`                                           | Path to the SQLite database (tenants, conversations, document metadata) |
+| `ADMIN_API_KEY`         | `admin`                                                     | Admin key for tenant management endpoints         |
 | `DEFAULT_RATE_LIMIT`    | `30`                                                        | Default requests/minute for new tenants           |
 | `BASE_CHUNK_SIZE`       | `1000`                                                      | Base chunk size (adapted by active tenant count)  |
 | `MIN_CHUNK_SIZE`        | `400`                                                       | Minimum chunk size under high tenant load         |
-| `LOG_LEVEL`             | `INFO`                                                      | Logging verbosity                                 |
 
-The Streamlit frontend also reads these environment variables:
+**Custom Document Uploads**
+
+| Variable                    | Default              | Description                                           |
+|-----------------------------|----------------------|-------------------------------------------------------|
+| `CUSTOM_DOCUMENTS_INDEX`    | `custom_documents`   | Elasticsearch index for custom document chunks        |
+| `UPLOAD_DIR`                | `data/uploads`       | Directory for storing uploaded PDF files              |
+| `MAX_UPLOAD_SIZE_MB`        | `50`                 | Maximum upload file size in megabytes                 |
+| `CUSTOM_BOOST_FACTOR`       | `1.5`                | Score multiplier for custom document chunks when user explicitly references them |
+| `CUSTOM_MILD_BOOST_FACTOR`  | `1.2`                | Score multiplier for custom chunks without explicit intent |
+| `CUSTOM_RESERVED_SLOTS`     | `2`                  | Number of top-k slots reserved for custom documents   |
+| `CUSTOM_CONTENT_WEIGHT`     | `0.7`                | Weight of content similarity vs. score in re-ranking  |
+
+**Async Task Manager**
+
+| Variable                | Default | Description                                       |
+|-------------------------|---------|---------------------------------------------------|
+| `TASK_TTL_SECONDS`      | `3600`  | Time-to-live for completed/failed tasks           |
+| `TASK_POLL_INTERVAL`    | `2.0`   | Default polling interval (seconds) for UI clients |
+
+**Streamlit Frontend**
 
 | Variable              | Default                   | Description                                  |
 |-----------------------|---------------------------|----------------------------------------------|
 | `API_URL`             | `http://localhost:8000`   | Backend API URL                              |
 | `API_REQUEST_TIMEOUT` | `600`                     | Timeout (seconds) for API requests from UI   |
+| `POLL_INTERVAL`       | `2`                       | Polling interval (seconds) for task status   |
 | `TENANT_NAME`         | *(empty)*                 | Display name shown in the UI header          |
 | `API_KEY_DEFAULT`     | *(empty)*                 | Pre-filled API key for the chat interface    |
 | `ADMIN_API_KEY`       | *(empty)*                 | Pre-filled admin key for the admin dashboard |
@@ -554,8 +751,8 @@ The Streamlit frontend also reads these environment variables:
 | **Search Engine**     | [Elasticsearch 8.14](https://www.elastic.co/) — hybrid BM25 + HNSW kNN    |
 | **API Framework**     | [FastAPI](https://fastapi.tiangolo.com/) + [Uvicorn](https://www.uvicorn.org/) |
 | **LLM Orchestration** | [LangChain](https://www.langchain.com/) + [HuggingFace Transformers](https://huggingface.co/docs/transformers/) |
-| **PDF Processing**    | [PyMuPDF](https://pymupdf.readthedocs.io/) (in-memory extraction)          |
+| **PDF Processing**    | [PyMuPDF](https://pymupdf.readthedocs.io/) + [pymupdf4llm](https://pypi.org/project/pymupdf4llm/) (Markdown extraction) |
 | **Frontend**          | [Streamlit](https://streamlit.io/)                                          |
-| **Tenant Storage**    | [SQLite](https://www.sqlite.org/) via [aiosqlite](https://github.com/omnilib/aiosqlite) |
+| **Persistence**       | [SQLite](https://www.sqlite.org/) via [aiosqlite](https://github.com/omnilib/aiosqlite) (tenants, conversations, document metadata) |
 | **Containerization**  | Docker + Docker Compose (NVIDIA CUDA 12.1 base image)                      |
 | **Data Source**       | [arXiv Dataset (Kaggle)](https://www.kaggle.com/datasets/Cornell-University/arxiv) |
