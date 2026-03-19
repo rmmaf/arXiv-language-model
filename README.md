@@ -321,16 +321,20 @@ The UI displays:
 - Expandable source papers with links to their arXiv pages, relevance scores, and source type (`arxiv` or `custom_upload`)
 - Processing time per response
 
+<img src="conversation1.png" alt="Conversation step 1" style="max-width: 100%; display: block;" />
+<img src="conversation2.png" alt="Conversation step 2" style="max-width: 100%; display: block;" />
+<img src="conversation3.png" alt="Conversation step 3" style="max-width: 100%; display: block;" />
+
 ### Admin Dashboard
-
-<img src="admin.png" alt="Admin dashboard screenshot" style="max-width: 100%; display: block;" />
-
 
 Navigate to the **Admin** page via the Streamlit sidebar. Enter your `ADMIN_API_KEY` to authenticate. The dashboard provides:
 
 - **Monitoring tab** — real-time metrics (active tenants, requests/minute, adaptive chunk size) and a request history table with status indicators
 - **One tab per active tenant** — each tab is a fully functional RAG interface that sends requests using that tenant's API key, with a deactivation button
 - **Tenant creation tab** ("+ New Tenant") — create a new tenant with a custom rate limit; the generated API key is displayed for copying
+
+<img src="admin.png" alt="Admin dashboard screenshot" style="max-width: 100%; display: block;" />
+
 
 To pre-fill the admin key field automatically, set the `ADMIN_API_KEY` environment variable in your `.env` file or pass it to the `streamlit` service in `docker-compose.yml`.
 
