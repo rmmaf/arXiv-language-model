@@ -50,6 +50,7 @@ RAG_PROMPT = PromptTemplate.from_template(
     "- NEVER refer to 'the context' or 'the provided context' in your "
     "answer. Present information naturally as if you know it, citing "
     "specific paper titles or authors instead.\n\n"
+    "- An article title will never be something like 'Article Info' or other non-descriptive titles about the study"
     "Context:\n{context}\n\n"
     "Conversation History:\n{chat_history}\n\n"
     "Question: {question}\n\n"
