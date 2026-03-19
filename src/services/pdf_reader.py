@@ -1,20 +1,18 @@
 """Async PDF downloader and text extractor for arXiv papers.
 
-Downloads PDFs entirely in memory (no disk I/O) using httpx,
-extracts structured Markdown with pymupdf4llm, and produces
-section-aware chunks via LangChain splitters.
+Downloads PDFs entirely in memory using httpx, extracts text
+via LangChain's PyPDFLoader, and produces chunks via a
+RecursiveCharacterTextSplitter.
 """
 
 import asyncio
 import logging
+import os
+import tempfile
 
-import fitz  # PyMuPDF
 import httpx
-import pymupdf4llm
-from langchain_text_splitters import (
-    MarkdownHeaderTextSplitter,
-    RecursiveCharacterTextSplitter,
-)
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from src.core.config import settings
 
@@ -22,12 +20,6 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2.0
-
-_HEADERS_TO_SPLIT_ON = [
-    ("#", "h1"),
-    ("##", "h2"),
-    ("###", "h3"),
-]
 
 
 class AsyncPDFReader:
@@ -97,53 +89,27 @@ class AsyncPDFReader:
 
     @staticmethod
     def extract_text(pdf_bytes: bytes) -> str:
-        """Extract structured Markdown from in-memory PDF bytes.
+        """Extract plain text from in-memory PDF bytes.
 
-        Uses pymupdf4llm which preserves headings, tables, and
-        handles letter-spacing natively.  Repetitive page
-        headers/footers are stripped automatically.
+        Writes bytes to a temporary file so that PyPDFLoader
+        (which requires a filesystem path) can read them, then
+        concatenates the page contents.
         """
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".pdf", delete=False,
+        )
         try:
-            return pymupdf4llm.to_markdown(
-                doc,
-                header=False,
-                footer=False,
-                ignore_images=True,
-                force_text=True,
-            )
+            tmp.write(pdf_bytes)
+            tmp.close()
+            docs = PyPDFLoader(tmp.name).load()
+            return "\n\n".join(doc.page_content for doc in docs)
         finally:
-            doc.close()
+            os.unlink(tmp.name)
 
     def chunk_text(self, text: str) -> list[str]:
-        """Split Markdown text into section-aware chunks.
-
-        Stage 1: split on Markdown headings so each section becomes
-        its own document.
-        Stage 2: subdivide long sections using the character-level
-        splitter, propagating the section path as a prefix.
-        """
-        md_splitter = MarkdownHeaderTextSplitter(
-            headers_to_split_on=_HEADERS_TO_SPLIT_ON,
-            strip_headers=False,
-        )
-        md_docs = md_splitter.split_text(text)
-
-        split_docs = self._splitter.split_documents(md_docs)
-
-        chunks: list[str] = []
-        for doc in split_docs:
-            section_parts = [
-                doc.metadata[k]
-                for k in ("h1", "h2", "h3")
-                if k in doc.metadata
-            ]
-            if section_parts:
-                prefix = f"[Section: {' > '.join(section_parts)}]\n"
-                chunks.append(prefix + doc.page_content)
-            else:
-                chunks.append(doc.page_content)
-        return chunks
+        """Split extracted text into overlapping chunks."""
+        docs = self._splitter.create_documents([text])
+        return [doc.page_content for doc in docs]
 
     async def _process_single(self, paper_id: str) -> list[str]:
         """Download, extract, and chunk a single paper."""
