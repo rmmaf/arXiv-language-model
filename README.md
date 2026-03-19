@@ -109,11 +109,13 @@ arXiv-language-model/
 
 ### Hardware
 
+
 | Component | Minimum | Recommended |
-|-----------|---------|-------------|
+| --------- | ------- | ----------- |
 | RAM       | 16 GB   | 32 GB       |
 | GPU VRAM  | 6 GB    | 8+ GB       |
 | Disk      | 30 GB   | 50+ GB      |
+
 
 > **Note:** The LLM runs in 4-bit quantization (`bitsandbytes`), so a mid-range NVIDIA GPU (e.g. RTX 3060 6 GB) is sufficient. CPU-only mode is supported but will be extremely slow for both embedding and inference.
 
@@ -130,7 +132,7 @@ arXiv-language-model/
 
 Download the arXiv metadata dataset from Kaggle:
 
-**Source:** https://www.kaggle.com/datasets/Cornell-University/arxiv
+**Source:** [https://www.kaggle.com/datasets/Cornell-University/arxiv](https://www.kaggle.com/datasets/Cornell-University/arxiv)
 
 Place the file at:
 
@@ -144,7 +146,7 @@ This is a JSONL file (one JSON object per line) containing metadata for ~2.5M+ a
 
 Download the model archive from Kaggle:
 
-**Source:** https://www.kaggle.com/models/Microsoft/phi-3
+**Source:** [https://www.kaggle.com/models/Microsoft/phi-3](https://www.kaggle.com/models/Microsoft/phi-3)
 
 Place the `.tar.gz` archive at:
 
@@ -175,6 +177,7 @@ docker compose up --build -d
 ```
 
 This starts three services:
+
 - **elasticsearch** — Single-node Elasticsearch 8.14 on port `9200`
 - **api** — The FastAPI backend on port `8000` (with GPU passthrough)
 - **streamlit** — The Streamlit web UI on port `8501`
@@ -202,7 +205,7 @@ Optionally, set the `API_KEY_DEFAULT` in `.env` (or in `docker-compose.yml`) to 
 API_KEY_DEFAULT=<tenant-api-key>
 ```
 
-After all services are up and indexing is complete, open the UI at **http://localhost:8501**.
+After all services are up and indexing is complete, open the UI at **[http://localhost:8501](http://localhost:8501)**.
 
 ### Stopping
 
@@ -255,6 +258,7 @@ docker compose up -d --build streamlit api
 This builds and starts both the **api** (FastAPI backend with GPU passthrough) and the **streamlit** (frontend) containers. The Elasticsearch service defined in `docker-compose.yml` will also start automatically since the `api` service depends on it.
 
 On startup the API server will:
+
 1. Initialize the tenant database (SQLite) and in-memory rate limiter.
 2. Connect to Elasticsearch and create the index (if it doesn't exist).
 3. Extract the model archive (if not already extracted).
@@ -274,7 +278,7 @@ curl -X POST http://localhost:8000/api/v1/admin/tenants \
 docker compose exec api python -m src.services.indexer --tenant-id <tenant-uuid>
 ```
 
-Open the UI at **http://localhost:8501**.
+Open the UI at **[http://localhost:8501](http://localhost:8501)**.
 
 ## Indexing the Dataset
 
@@ -292,6 +296,7 @@ The indexer is designed for large-scale ingestion:
 - **Configurable batch sizes** — `INDEXER_BATCH_SIZE` (default 2000) controls the Elasticsearch bulk size; `ENCODER_BATCH_SIZE` (default 64) controls the sentence-transformer batch size.
 
 The Elasticsearch index uses a hybrid mapping with:
+
 - `paper_id` and `tenant_id` as keyword fields
 - `title` and `abstract` as full-text searchable fields (BM25)
 - `embedding` as a `dense_vector` field with HNSW cosine similarity index (kNN)
@@ -300,9 +305,10 @@ The Elasticsearch index uses a hybrid mapping with:
 
 ### Streamlit UI
 
-Open your browser at **http://localhost:8501**. Enter your tenant API key in the sidebar, type a research question, and press Enter.
+Open your browser at **[http://localhost:8501](http://localhost:8501)**. Enter your tenant API key in the sidebar, type a research question, and press Enter.
 
 The chat interface supports:
+
 - **Persistent multi-conversation sessions** — create, switch between, and delete conversations from the sidebar; state is stored in SQLite and survives page reloads
 - **Background task processing** — questions are processed asynchronously with live polling and a stop button to cancel in-flight tasks
 - **Custom document uploads** — upload your own PDFs to use as additional RAG context alongside arXiv papers
@@ -310,11 +316,15 @@ The chat interface supports:
 - **top_k control** — adjust how many papers to retrieve (1–10)
 
 The UI displays:
+
 - The generated answer from the LLM
 - Expandable source papers with links to their arXiv pages, relevance scores, and source type (`arxiv` or `custom_upload`)
 - Processing time per response
 
 ### Admin Dashboard
+
+<img src="admin.png" alt="Admin dashboard screenshot" style="max-width: 100%; display: block;" />
+
 
 Navigate to the **Admin** page via the Streamlit sidebar. Enter your `ADMIN_API_KEY` to authenticate. The dashboard provides:
 
@@ -384,19 +394,23 @@ Submit a research question to the RAG pipeline as a background task.
 
 **Headers:**
 
-| Header      | Required | Description          |
-|-------------|----------|----------------------|
-| `X-API-Key` | Yes      | Tenant API key       |
+
+| Header      | Required | Description    |
+| ----------- | -------- | -------------- |
+| `X-API-Key` | Yes      | Tenant API key |
+
 
 **Request Body:**
 
-| Field                | Type     | Required | Default | Description                                                            |
-|----------------------|----------|----------|---------|------------------------------------------------------------------------|
-| `question`           | string   | Yes      | —       | Research question (10–1000 chars)                                      |
-| `top_k`              | int      | No       | 3       | Number of papers to retrieve (1–10)                                    |
-| `conversation_id`    | string   | No       | null    | Existing conversation ID to continue; omit to start a new conversation |
-| `fetch_new_papers`   | boolean  | No       | true    | When `false`, reuses stored context instead of searching for new papers |
-| `custom_document_ids`| string[] | No       | null    | IDs of custom uploaded documents to include as context                 |
+
+| Field                 | Type     | Required | Default | Description                                                             |
+| --------------------- | -------- | -------- | ------- | ----------------------------------------------------------------------- |
+| `question`            | string   | Yes      | —       | Research question (10–1000 chars)                                       |
+| `top_k`               | int      | No       | 3       | Number of papers to retrieve (1–10)                                     |
+| `conversation_id`     | string   | No       | null    | Existing conversation ID to continue; omit to start a new conversation  |
+| `fetch_new_papers`    | boolean  | No       | true    | When `false`, reuses stored context instead of searching for new papers |
+| `custom_document_ids` | string[] | No       | null    | IDs of custom uploaded documents to include as context                  |
+
 
 **Response:**
 
@@ -411,12 +425,14 @@ The question is processed asynchronously. Use the `task_id` to poll for results 
 
 **Error Responses:**
 
-| Status | Description                             |
-|--------|-----------------------------------------|
-| 401    | Invalid or inactive API key             |
-| 403    | Conversation belongs to another tenant  |
-| 404    | Conversation not found                  |
-| 429    | Tenant rate limit exceeded              |
+
+| Status | Description                            |
+| ------ | -------------------------------------- |
+| 401    | Invalid or inactive API key            |
+| 403    | Conversation belongs to another tenant |
+| 404    | Conversation not found                 |
+| 429    | Tenant rate limit exceeded             |
+
 
 ---
 
@@ -532,11 +548,13 @@ Upload a custom PDF to use as RAG context. Accepts `multipart/form-data` with a 
 }
 ```
 
-| Status | Description                    |
-|--------|--------------------------------|
-| 400    | Not a PDF or empty file        |
-| 413    | File exceeds size limit        |
-| 422    | Could not process the PDF      |
+
+| Status | Description               |
+| ------ | ------------------------- |
+| 400    | Not a PDF or empty file   |
+| 413    | File exceeds size limit   |
+| 422    | Could not process the PDF |
+
 
 ---
 
@@ -580,16 +598,20 @@ Create a new tenant.
 
 **Headers:**
 
-| Header        | Required | Description    |
-|---------------|----------|----------------|
-| `X-Admin-Key` | Yes      | Admin API key  |
+
+| Header        | Required | Description   |
+| ------------- | -------- | ------------- |
+| `X-Admin-Key` | Yes      | Admin API key |
+
 
 **Request Body:**
 
-| Field        | Type   | Required | Default | Description                          |
-|--------------|--------|----------|---------|--------------------------------------|
-| `name`       | string | Yes      | —       | Tenant name (1–200 chars)            |
-| `rate_limit` | int    | No       | 30      | Max requests per minute (1–1000)     |
+
+| Field        | Type   | Required | Default | Description                      |
+| ------------ | ------ | -------- | ------- | -------------------------------- |
+| `name`       | string | Yes      | —       | Tenant name (1–200 chars)        |
+| `rate_limit` | int    | No       | 30      | Max requests per minute (1–1000) |
+
 
 **Response (201):**
 
@@ -654,9 +676,11 @@ Recent request history log.
 
 **Query Parameters:**
 
-| Parameter | Type | Default | Description                |
-|-----------|------|---------|----------------------------|
+
+| Parameter | Type | Default | Description                 |
+| --------- | ---- | ------- | --------------------------- |
 | `limit`   | int  | 50      | Number of entries (max 200) |
+
 
 **Response:**
 
@@ -679,80 +703,93 @@ All settings are loaded from environment variables or a `.env` file. Below is th
 
 **Core Settings**
 
-| Variable                | Default                                                     | Description                                       |
-|-------------------------|-------------------------------------------------------------|---------------------------------------------------|
-| `ELASTICSEARCH_URL`     | `http://elasticsearch:9200`                                 | Elasticsearch connection URL                      |
-| `INDEX_NAME`            | `arxiv_papers`                                              | Elasticsearch index for arXiv papers              |
-| `DATA_PATH`             | `data/arxiv-metadata-oai-snapshot.json`                     | Path to the arXiv JSONL metadata file             |
-| `MODEL_ARCHIVE_PATH`    | `models/phi-3-pytorch-phi-3.5-mini-instruct-v2.tar.gz`     | Path to the model `.tar.gz` archive               |
-| `MODEL_EXTRACTED_PATH`  | `models/phi-3.5-mini-instruct`                              | Path where the model is extracted to              |
-| `EMBEDDING_MODEL_NAME`  | `all-MiniLM-L6-v2`                                         | Sentence-transformer model for embeddings         |
-| `EMBEDDING_DEVICE`      | `cuda` (if available, else `cpu`)                           | Device for embedding computation                  |
-| `EMBEDDING_DIM`         | `384`                                                       | Embedding vector dimensionality                   |
-| `LLM_MAX_NEW_TOKENS`    | `512`                                                       | Max tokens the LLM can generate per answer        |
-| `LLM_TEMPERATURE`       | `0.3`                                                       | Sampling temperature for LLM generation           |
-| `LLM_TIMEOUT`           | `900.0`                                                     | Timeout (seconds) for LLM inference               |
-| `API_REQUEST_TIMEOUT`   | `1200.0`                                                    | Timeout (seconds) for the full API request        |
-| `CHUNK_SIZE`            | `1000`                                                      | Character size of text chunks from PDFs           |
-| `CHUNK_OVERLAP`         | `200`                                                       | Overlap between consecutive chunks                |
-| `TOP_K_RESULTS`         | `3`                                                         | Default number of search results                  |
-| `PDF_DOWNLOAD_TIMEOUT`  | `30.0`                                                      | Timeout (seconds) for arXiv PDF downloads         |
-| `PDF_BASE_URL`          | `https://arxiv.org/pdf`                                     | Base URL for arXiv PDF downloads                  |
-| `INDEXER_BATCH_SIZE`    | `2000`                                                      | Documents per Elasticsearch bulk request          |
-| `ENCODER_BATCH_SIZE`    | `64`                                                        | Sentences per encoding batch                      |
-| `LOG_LEVEL`             | `INFO`                                                      | Logging verbosity                                 |
+
+| Variable               | Default                                                | Description                                |
+| ---------------------- | ------------------------------------------------------ | ------------------------------------------ |
+| `ELASTICSEARCH_URL`    | `http://elasticsearch:9200`                            | Elasticsearch connection URL               |
+| `INDEX_NAME`           | `arxiv_papers`                                         | Elasticsearch index for arXiv papers       |
+| `DATA_PATH`            | `data/arxiv-metadata-oai-snapshot.json`                | Path to the arXiv JSONL metadata file      |
+| `MODEL_ARCHIVE_PATH`   | `models/phi-3-pytorch-phi-3.5-mini-instruct-v2.tar.gz` | Path to the model `.tar.gz` archive        |
+| `MODEL_EXTRACTED_PATH` | `models/phi-3.5-mini-instruct`                         | Path where the model is extracted to       |
+| `EMBEDDING_MODEL_NAME` | `all-MiniLM-L6-v2`                                     | Sentence-transformer model for embeddings  |
+| `EMBEDDING_DEVICE`     | `cuda` (if available, else `cpu`)                      | Device for embedding computation           |
+| `EMBEDDING_DIM`        | `384`                                                  | Embedding vector dimensionality            |
+| `LLM_MAX_NEW_TOKENS`   | `512`                                                  | Max tokens the LLM can generate per answer |
+| `LLM_TEMPERATURE`      | `0.3`                                                  | Sampling temperature for LLM generation    |
+| `LLM_TIMEOUT`          | `900.0`                                                | Timeout (seconds) for LLM inference        |
+| `API_REQUEST_TIMEOUT`  | `1200.0`                                               | Timeout (seconds) for the full API request |
+| `CHUNK_SIZE`           | `1000`                                                 | Character size of text chunks from PDFs    |
+| `CHUNK_OVERLAP`        | `200`                                                  | Overlap between consecutive chunks         |
+| `TOP_K_RESULTS`        | `3`                                                    | Default number of search results           |
+| `PDF_DOWNLOAD_TIMEOUT` | `30.0`                                                 | Timeout (seconds) for arXiv PDF downloads  |
+| `PDF_BASE_URL`         | `https://arxiv.org/pdf`                                | Base URL for arXiv PDF downloads           |
+| `INDEXER_BATCH_SIZE`   | `2000`                                                 | Documents per Elasticsearch bulk request   |
+| `ENCODER_BATCH_SIZE`   | `64`                                                   | Sentences per encoding batch               |
+| `LOG_LEVEL`            | `INFO`                                                 | Logging verbosity                          |
+
 
 **Multi-Tenancy**
 
-| Variable                | Default                                                     | Description                                       |
-|-------------------------|-------------------------------------------------------------|---------------------------------------------------|
-| `TENANT_DB_PATH`        | `data/tenants.db`                                           | Path to the SQLite database (tenants, conversations, document metadata) |
-| `ADMIN_API_KEY`         | `admin`                                                     | Admin key for tenant management endpoints         |
-| `DEFAULT_RATE_LIMIT`    | `30`                                                        | Default requests/minute for new tenants           |
-| `BASE_CHUNK_SIZE`       | `1000`                                                      | Base chunk size (adapted by active tenant count)  |
-| `MIN_CHUNK_SIZE`        | `400`                                                       | Minimum chunk size under high tenant load         |
+
+| Variable             | Default           | Description                                                             |
+| -------------------- | ----------------- | ----------------------------------------------------------------------- |
+| `TENANT_DB_PATH`     | `data/tenants.db` | Path to the SQLite database (tenants, conversations, document metadata) |
+| `ADMIN_API_KEY`      | `admin`           | Admin key for tenant management endpoints                               |
+| `DEFAULT_RATE_LIMIT` | `30`              | Default requests/minute for new tenants                                 |
+| `BASE_CHUNK_SIZE`    | `1000`            | Base chunk size (adapted by active tenant count)                        |
+| `MIN_CHUNK_SIZE`     | `400`             | Minimum chunk size under high tenant load                               |
+
 
 **Custom Document Uploads**
 
-| Variable                    | Default              | Description                                           |
-|-----------------------------|----------------------|-------------------------------------------------------|
-| `CUSTOM_DOCUMENTS_INDEX`    | `custom_documents`   | Elasticsearch index for custom document chunks        |
-| `UPLOAD_DIR`                | `data/uploads`       | Directory for storing uploaded PDF files              |
-| `MAX_UPLOAD_SIZE_MB`        | `50`                 | Maximum upload file size in megabytes                 |
-| `CUSTOM_BOOST_FACTOR`       | `1.5`                | Score multiplier for custom document chunks when user explicitly references them |
-| `CUSTOM_MILD_BOOST_FACTOR`  | `1.2`                | Score multiplier for custom chunks without explicit intent |
-| `CUSTOM_RESERVED_SLOTS`     | `2`                  | Number of top-k slots reserved for custom documents   |
-| `CUSTOM_CONTENT_WEIGHT`     | `0.7`                | Weight of content similarity vs. score in re-ranking  |
+
+| Variable                   | Default            | Description                                                                      |
+| -------------------------- | ------------------ | -------------------------------------------------------------------------------- |
+| `CUSTOM_DOCUMENTS_INDEX`   | `custom_documents` | Elasticsearch index for custom document chunks                                   |
+| `UPLOAD_DIR`               | `data/uploads`     | Directory for storing uploaded PDF files                                         |
+| `MAX_UPLOAD_SIZE_MB`       | `50`               | Maximum upload file size in megabytes                                            |
+| `CUSTOM_BOOST_FACTOR`      | `1.5`              | Score multiplier for custom document chunks when user explicitly references them |
+| `CUSTOM_MILD_BOOST_FACTOR` | `1.2`              | Score multiplier for custom chunks without explicit intent                       |
+| `CUSTOM_RESERVED_SLOTS`    | `2`                | Number of top-k slots reserved for custom documents                              |
+| `CUSTOM_CONTENT_WEIGHT`    | `0.7`              | Weight of content similarity vs. score in re-ranking                             |
+
 
 **Async Task Manager**
 
-| Variable                | Default | Description                                       |
-|-------------------------|---------|---------------------------------------------------|
-| `TASK_TTL_SECONDS`      | `3600`  | Time-to-live for completed/failed tasks           |
-| `TASK_POLL_INTERVAL`    | `2.0`   | Default polling interval (seconds) for UI clients |
+
+| Variable             | Default | Description                                       |
+| -------------------- | ------- | ------------------------------------------------- |
+| `TASK_TTL_SECONDS`   | `3600`  | Time-to-live for completed/failed tasks           |
+| `TASK_POLL_INTERVAL` | `2.0`   | Default polling interval (seconds) for UI clients |
+
 
 **Streamlit Frontend**
 
-| Variable              | Default                   | Description                                  |
-|-----------------------|---------------------------|----------------------------------------------|
-| `API_URL`             | `http://localhost:8000`   | Backend API URL                              |
-| `API_REQUEST_TIMEOUT` | `600`                     | Timeout (seconds) for API requests from UI   |
-| `POLL_INTERVAL`       | `2`                       | Polling interval (seconds) for task status   |
-| `TENANT_NAME`         | *(empty)*                 | Display name shown in the UI header          |
-| `API_KEY_DEFAULT`     | *(empty)*                 | Pre-filled API key for the chat interface    |
-| `ADMIN_API_KEY`       | *(empty)*                 | Pre-filled admin key for the admin dashboard |
+
+| Variable              | Default                 | Description                                  |
+| --------------------- | ----------------------- | -------------------------------------------- |
+| `API_URL`             | `http://localhost:8000` | Backend API URL                              |
+| `API_REQUEST_TIMEOUT` | `600`                   | Timeout (seconds) for API requests from UI   |
+| `POLL_INTERVAL`       | `2`                     | Polling interval (seconds) for task status   |
+| `TENANT_NAME`         | *(empty)*               | Display name shown in the UI header          |
+| `API_KEY_DEFAULT`     | *(empty)*               | Pre-filled API key for the chat interface    |
+| `ADMIN_API_KEY`       | *(empty)*               | Pre-filled admin key for the admin dashboard |
+
 
 ## Tech Stack
 
-| Component             | Technology                                                                  |
-|-----------------------|-----------------------------------------------------------------------------|
-| **LLM**              | [Phi-3.5 Mini Instruct](https://www.kaggle.com/models/Microsoft/phi-3) (4-bit quantized via `bitsandbytes`) |
-| **Embeddings**        | [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (384-dim) |
-| **Search Engine**     | [Elasticsearch 8.14](https://www.elastic.co/) — hybrid BM25 + HNSW kNN    |
-| **API Framework**     | [FastAPI](https://fastapi.tiangolo.com/) + [Uvicorn](https://www.uvicorn.org/) |
-| **LLM Orchestration** | [LangChain](https://www.langchain.com/) + [HuggingFace Transformers](https://huggingface.co/docs/transformers/) |
+
+| Component             | Technology                                                                                                                                         |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **LLM**               | [Phi-3.5 Mini Instruct](https://www.kaggle.com/models/Microsoft/phi-3) (4-bit quantized via `bitsandbytes`)                                        |
+| **Embeddings**        | [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) (384-dim)                                                        |
+| **Search Engine**     | [Elasticsearch 8.14](https://www.elastic.co/) — hybrid BM25 + HNSW kNN                                                                             |
+| **API Framework**     | [FastAPI](https://fastapi.tiangolo.com/) + [Uvicorn](https://www.uvicorn.org/)                                                                     |
+| **LLM Orchestration** | [LangChain](https://www.langchain.com/) + [HuggingFace Transformers](https://huggingface.co/docs/transformers/)                                    |
 | **PDF Processing**    | [PyPDFLoader](https://python.langchain.com/docs/integrations/document_loaders/pypdfloader/) (LangChain) + [pypdf](https://pypi.org/project/pypdf/) |
-| **Frontend**          | [Streamlit](https://streamlit.io/)                                          |
-| **Persistence**       | [SQLite](https://www.sqlite.org/) via [aiosqlite](https://github.com/omnilib/aiosqlite) (tenants, conversations, document metadata) |
-| **Containerization**  | Docker + Docker Compose (NVIDIA CUDA 12.1 base image)                      |
-| **Data Source**       | [arXiv Dataset (Kaggle)](https://www.kaggle.com/datasets/Cornell-University/arxiv) |
+| **Frontend**          | [Streamlit](https://streamlit.io/)                                                                                                                 |
+| **Persistence**       | [SQLite](https://www.sqlite.org/) via [aiosqlite](https://github.com/omnilib/aiosqlite) (tenants, conversations, document metadata)                |
+| **Containerization**  | Docker + Docker Compose (NVIDIA CUDA 12.1 base image)                                                                                              |
+| **Data Source**       | [arXiv Dataset (Kaggle)](https://www.kaggle.com/datasets/Cornell-University/arxiv)                                                                 |
+
+
