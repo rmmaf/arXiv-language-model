@@ -29,7 +29,7 @@ When a user asks a question, the system:
 4. **Embeds** the question using the `all-MiniLM-L6-v2` sentence-transformer model.
 5. **Searches** Elasticsearch with a hybrid query that combines BM25 (lexical) and kNN (semantic) scoring, scoped to the tenant's arXiv documents. If custom documents are attached, searches the `custom_documents` index as well.
 6. **Downloads** the full PDFs of the top-matching papers from arXiv.
-7. **Extracts and chunks** text from the PDFs using PyMuPDF/pymupdf4llm and LangChain text splitters, with an adaptive chunk size that decreases as more tenants are active.
+7. **Extracts and chunks** text from the PDFs using LangChain's PyPDFLoader and RecursiveCharacterTextSplitter, with an adaptive chunk size that decreases as more tenants are active.
 8. **Re-ranks** the chunks by cosine similarity to the original question, with configurable boosting for custom document chunks (reserved slots + score multiplier).
 9. **Generates** an answer by feeding the top chunks plus conversation history as context into the Phi-3.5 Mini Instruct LLM (running locally in 4-bit quantization).
 10. **Stores the conversation** persistently in SQLite so follow-up questions can reuse the same context without re-fetching PDFs.
@@ -49,7 +49,7 @@ If PDF extraction fails, the system gracefully falls back to using paper abstrac
           ┌────────────┐ ┌───────────┐  ┌──────────────────┐
           │  Sentence   │ │  arXiv    │  │  Phi-3.5 Mini    │
           │ Transformer │ │  PDF DL   │  │ (4-bit, local)   │
-          │  Encoder    │ │+ pymupdf4l│  │ via HuggingFace  │
+          │  Encoder    │ │+ PyPDFLoad│  │ via HuggingFace  │
           └────────────┘ └───────────┘  └──────────────────┘
                   │
      ┌────────────┼────────────────────────────┐
@@ -751,7 +751,7 @@ All settings are loaded from environment variables or a `.env` file. Below is th
 | **Search Engine**     | [Elasticsearch 8.14](https://www.elastic.co/) — hybrid BM25 + HNSW kNN    |
 | **API Framework**     | [FastAPI](https://fastapi.tiangolo.com/) + [Uvicorn](https://www.uvicorn.org/) |
 | **LLM Orchestration** | [LangChain](https://www.langchain.com/) + [HuggingFace Transformers](https://huggingface.co/docs/transformers/) |
-| **PDF Processing**    | [PyMuPDF](https://pymupdf.readthedocs.io/) + [pymupdf4llm](https://pypi.org/project/pymupdf4llm/) (Markdown extraction) |
+| **PDF Processing**    | [PyPDFLoader](https://python.langchain.com/docs/integrations/document_loaders/pypdfloader/) (LangChain) + [pypdf](https://pypi.org/project/pypdf/) |
 | **Frontend**          | [Streamlit](https://streamlit.io/)                                          |
 | **Persistence**       | [SQLite](https://www.sqlite.org/) via [aiosqlite](https://github.com/omnilib/aiosqlite) (tenants, conversations, document metadata) |
 | **Containerization**  | Docker + Docker Compose (NVIDIA CUDA 12.1 base image)                      |
